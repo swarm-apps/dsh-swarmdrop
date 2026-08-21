@@ -11,10 +11,9 @@ its CLI.
 > **Status: developer preview.** dsh itself declares breaking changes, and this
 > plugin sits on its extension seams. Pin a version.
 >
-> **`0.1.x` ships the Node half only** — the tools, the `/swarmdrop` command and
-> the inbox projection. The browser half (conversation rows, the `@` source) is
-> written and typechecked in this repo but **cannot be published yet**; see
-> [Why the browser half is not in the package](#why-the-browser-half-is-not-in-the-package).
+> **Pin the dsh line too.** The peer ranges target `0.1.0-rc.x`; npm's `latest`
+> tag on the `@deepseek-ai/*` packages still points at the older `0.0.1-rc.x`
+> line, so an unpinned install resolves to packages this plugin does not target.
 
 ## What you get
 
@@ -22,8 +21,8 @@ its CLI.
 |---|---|
 | "send the report to my phone" | The agent calls `swarmdrop_send_files`; a transfer row appears in the conversation and follows it to completion. |
 | `/swarmdrop send ./report.pdf phone` | Same, without a model round trip. |
-| `@` in the composer | Your inbox — everything your devices sent this machine — as reference candidates. *(browser half; not in `0.1.x`)* |
-| Your phone sends a file | The item becomes referenceable, and a row appears in the conversation. *(the row is the browser half; not in `0.1.x`)* |
+| `@` in the composer | Your inbox — everything your devices sent this machine — as reference candidates. |
+| Your phone sends a file | A row appears in the conversation, and the item becomes referenceable. |
 
 ## Install
 
@@ -80,28 +79,6 @@ failing mysteriously.
 SwarmDrop node is running to probe with — it is not the same as offline, and the
 distinction is the difference between "your phone is asleep" and "start SwarmDrop".
 
-## Why the browser half is not in the package
-
-Two upstream blockers, both outside this repo:
-
-1. **dsh's client bundle format is produced by an unpublished preset.** A plugin's
-   `./client` entry is not an ordinary ESM bundle — it is a closure-factory
-   artifact that calls `window.__ModuleLoader__.load({ id, factory })` and
-   resolves externals through an injected `require`. The preset that emits it
-   lives at `packages/client/tsdown.client.ts` inside the dsh monorepo, is not
-   part of any package, and is not on npm. A stock bundler cannot produce a
-   loadable bundle.
-2. **`@deepseek-ai/dsh-compact` is not on npm**, so `@deepseek-ai/dsh-client-runtime`'s
-   dependency chain cannot resolve from the registry at all.
-
-Shipping the `dsh.client` declaration anyway would be worse than omitting it:
-dsh's scanner treats a declared-but-missing bundle as a loud failure and the
-whole plugin's fiber goes FAILED — the tools would stop working too.
-
-The browser sources stay in this repo and typecheck against a dsh checkout
-(`npm run typecheck:client`). When the two blockers clear, the `dsh.client`
-declaration and the `./client` export come back and the version bumps.
-
 ## How it is put together
 
 ```
@@ -139,8 +116,8 @@ means something different is the worst failure available.
 
 ```bash
 npm install
-npm run typecheck                      # the Node half
-DSH_REPO=../deepseek-harness npm run typecheck:client   # the browser half
+npm run typecheck   # both halves
+npm run build       # lib/index.js + lib/client.js
 ```
 
 **The two halves compile as separate TypeScript programs, and that is not
@@ -151,14 +128,15 @@ point nowhere near the cause. The same rule applies inside the source: **client
 files must never import a package root** — only `/types` and `/client`
 subpaths, which carry no `Context` augmentation.
 
-The Node half compiles against the published `@deepseek-ai/*` packages. The
-browser half cannot: `@deepseek-ai/dsh-client-runtime` depends on
-`@deepseek-ai/dsh-compact`, which is **not on npm** — the client-side dependency
-chain is incomplete in the registry. Until that is published, the browser half
-typechecks against a dsh checkout: `scripts/dev-tsconfig.mjs` rebases dsh's own
-153-entry `paths` map onto that checkout, so we inherit its resolution rather
-than inventing a second one that will drift.
+**The browser bundle is not an ordinary ESM build.** dsh's loader expects the
+`./client` entry to register itself with
+`window.__ModuleLoader__.load({ id, factory })`, resolving externals through an
+injected `require` — no import map, no globals. dsh builds its own with a shared
+tsdown preset that is not published, so `scripts/build-client.mjs` reimplements
+the wrapper; it is 30 lines. `id` must equal the package name, because that is
+the entry name the host composed into `window.__DSH_BOOT__`.
 
+Two things a reader will otherwise rediscover the hard way:
 Two things a reader will otherwise rediscover the hard way:
 
 - **The conversation-node cookbook's snippet does not compile as written.**
@@ -167,6 +145,11 @@ Two things a reader will otherwise rediscover the hard way:
   first-party code passes is not exported. See `src/client/nodes.tsx`.
 - **`exec.agent` is optional.** A nested Code-Mode dispatch has no agent, so a
   send still happens but has no conversation to attribute itself to.
+- **npm's `latest` tag lags the real version line.** `npm view @deepseek-ai/…`
+  reports `0.0.1-rc.1`, whose client packages depend on `@deepseek-ai/dsh-compact`
+  — a package that is not published, making that line unresolvable. The line
+  actually in use is `0.1.0-rc.x`, which resolves cleanly. Check
+  `npm view <pkg> versions` rather than the bare `version`.
 
 ## License
 

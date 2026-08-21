@@ -1,5 +1,15 @@
 # Changelog
 
+All notable changes to this project are documented here. The entries are
+written by hand and the release workflow reads them back: `gh release create`
+is given this file's section for the tag being pushed, so a version with
+nothing written down does not get published.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
 ## [0.3.0] - 2026-08-21
 
 ### Added
@@ -155,3 +165,10 @@
 
 First release: tools, the `/swarmdrop` command, conversation rows for transfers
 and received items, and the `@` inbox source.
+
+[Unreleased]: https://github.com/swarm-apps/dsh-swarmdrop/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/swarm-apps/dsh-swarmdrop/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/swarm-apps/dsh-swarmdrop/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/swarm-apps/dsh-swarmdrop/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/swarm-apps/dsh-swarmdrop/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/swarm-apps/dsh-swarmdrop/releases/tag/v0.1.0

@@ -1,0 +1,40 @@
+# Run the checks the release job runs, but on the way in rather than on the way
+# out.
+#
+# Without this, `typecheck` and `test` first ran at `git push --tags` — after
+# the tag existed. A red check there is not a failed build, it is a tag pointing
+# at a commit that was never released, which has to be deleted from the remote
+# and re-pushed. Same checks, moved to where failing them is free.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to a branch makes the first run's answer worthless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      # The release job never builds explicitly — `prepublishOnly` does it, deep
+      # inside `npm publish`, where a failure aborts a release that has already
+      # passed every other gate. The browser half in particular goes through
+      # tsdown and a hand-written wrapper that `typecheck` does not exercise.
+      - run: npm run build

@@ -1,4 +1,4 @@
-# Publish to npm when a `v*` tag is pushed.
+# Publish to npm and cut a GitHub Release when a `v*` tag is pushed.
 #
 # Tag-triggered rather than push-to-main: publishing is irreversible (npm's
 # unpublish window is narrow and its rules are strict), so it should take a
@@ -13,7 +13,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # Creating the Release and its notes is a write to this repository.
+      contents: write
       # Lets npm attach a provenance attestation: the published tarball can be
       # traced back to this workflow run and commit. Costs nothing and is the
       # difference between "trust the maintainer" and "check the receipt".
@@ -43,15 +44,54 @@ jobs:
       # Refuse to publish a tag that disagrees with package.json. Getting this
       # wrong is silent: npm happily publishes whatever version the manifest
       # says, and the tag then points at a release that does not exist.
-      - name: Verify the tag matches package.json
+      #
+      # The lockfile is checked against the same number, because it is the one
+      # place a hand-edited version leaves a trace. `npm version` writes both
+      # files; editing package.json by hand writes one, and the lockfile then
+      # drifts unnoticed until some later `npm ci` refuses to install at all.
+      - name: Verify the tag, package.json and the lockfile agree
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           PKG="$(node -p "require('./package.json').version")"
+          LOCK="$(node -p "require('./package-lock.json').version")"
           if [ "$TAG" != "$PKG" ]; then
             echo "tag v$TAG does not match package.json $PKG" >&2
             exit 1
           fi
+          if [ "$LOCK" != "$PKG" ]; then
+            echo "package-lock.json says $LOCK, package.json says $PKG" >&2
+            echo "run 'npm install --package-lock-only' and commit the result" >&2
+            exit 1
+          fi
+
+      # Read the notes out of CHANGELOG.md *before* publishing. The script exits
+      # non-zero when the version has no section, which makes an undocumented
+      # release fail at the gate rather than land on npm and be unfixable.
+      # Written outside the checkout so the tarball cannot pick it up.
+      - name: Read the release notes from CHANGELOG.md
+        run: node scripts/changelog-section.mjs "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/release-notes.md"
 
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # After npm, not before. npm publish is the irreversible half and the half
+      # most likely to fail; a Release cut first would end up pointing at a
+      # version that never shipped. This way the failure mode is a published
+      # package with no Release yet, which one `gh release create` repairs.
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # A version with a hyphen is a prerelease under semver (`1.0.0-rc.1`).
+          # Marking it as one keeps it off the repository's "Latest" badge.
+          case "$VERSION" in
+            *-*) PRERELEASE=--prerelease ;;
+            *)   PRERELEASE= ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --verify-tag \
+            $PRERELEASE

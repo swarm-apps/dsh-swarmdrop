@@ -276,6 +276,45 @@ Two things a reader will otherwise rediscover the hard way:
   actually in use is `0.1.0-rc.x`, which resolves cleanly. Check
   `npm view <pkg> versions` rather than the bare `version`.
 
+### Releasing
+
+The changelog is the input to a release, not a record written after one. Write
+the section first, then tag:
+
+```bash
+# 1. Describe the change in CHANGELOG.md under a new `## [x.y.z] - YYYY-MM-DD`
+#    heading, and add its compare link at the foot of the file. Commit it.
+# 2. Let npm set the version, commit it and tag it.
+npm version minor
+git push --follow-tags
+```
+
+**Set the version with `npm version`, never by editing package.json.** It
+writes package-lock.json too, and a hand-edited manifest leaves the lockfile
+behind — which stays invisible until some later `npm ci` refuses to install and
+takes the release job down with it. The release job checks the two against each
+other for that reason.
+
+Pushing the tag runs `release.yml`, which typechecks both halves, tests,
+refuses a tag that disagrees with package.json or a lockfile that disagrees
+with either, reads the notes out of CHANGELOG.md — **failing if that version
+has no section** — publishes to npm with provenance, and cuts the GitHub
+Release from those same notes.
+
+npm is published before the Release is cut, because npm is the half that cannot
+be taken back. So the one failure worth knowing how to repair is a run that
+died after publishing: do **not** re-run the job, which would try to publish a
+version that already exists. Cut the Release by hand instead:
+
+```bash
+node scripts/changelog-section.mjs x.y.z > /tmp/notes.md
+gh release create vx.y.z --title vx.y.z --notes-file /tmp/notes.md --verify-tag
+```
+
+Ordinary pushes and pull requests run `ci.yml` — the same typecheck and tests,
+plus a real `npm run build`, so the browser bundle's wrapper is exercised
+somewhere other than inside `npm publish`.
+
 ## License
 
 MIT

@@ -81,6 +81,12 @@ itself — nothing else to install. If you already have SwarmDrop from Homebrew
 or the install script and would rather use it, set `SWARMDROP_BIN` to its path
 and the bundled copy is ignored.
 
+You will see pnpm say `Ignored build scripts: swarmdrop` during the install.
+That is fine: the npm package fetches its platform binary from a postinstall
+hook, pnpm blocks those by default, and the shim falls back to fetching on first
+use instead. The only visible effect is that the first SwarmDrop call after
+installing takes a few seconds longer than the rest.
+
 **`swarmdrop` 0.5.0 or newer is required.** 0.4.0 added `swarmdrop watch`, which
 this plugin subscribes to; 0.5.0 added `invite create --decide-from-stdin`, which
 is what lets the panel run the pairing desk. On 0.4.0 everything else works and

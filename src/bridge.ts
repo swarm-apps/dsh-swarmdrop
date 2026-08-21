@@ -1,5 +1,10 @@
 /**
- * `swarmdrop watch` → Session events.
+ * Machine-wide facts → per-session events.
+ *
+ * This is the *routing* half. The folding half is {@link MachineState}, which
+ * holds what this machine looks like right now; this class decides which of
+ * those happenings deserve a durable row in which conversation, and appends it.
+ * Neither keeps a copy of the other's data.
  *
  * ## Which session receives a machine-wide event
  *
@@ -24,114 +29,32 @@
  * decides. Entries leave the table at the terminal phase; nothing else removes
  * them, because a transfer that never terminates is exactly the one still worth
  * showing.
+ *
+ * ## Node and device state deliberately produce no events
+ *
+ * "The node stopped" is not something that happened *in a conversation*, and a
+ * transcript that grows rows the reader cannot account for is worse than one
+ * that is quiet. Those frames stop at {@link MachineState}, where the panel
+ * reads them.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 
-import { watch, type WatchFrame } from './cli.js'
-import type { InboxEntryData, InboxBaselineData, TransferId } from './types.js'
-
-/** How many inbox entries a session baseline carries. */
-const BASELINE_LIMIT = 50
+import type { SendFilesResult, WatchFrame } from './cli.js'
+import { count, text } from './coerce.js'
+import { entryOf, type MachineState } from './machine.js'
+import type { InboxEntryData, TransferId } from './types.js'
 
 /** Terminal transfer phase, as the CLI names it. */
 const PHASE_TERMINAL = 'terminal'
 
-/** Read a string field off an untrusted frame. */
-function str(frame: WatchFrame, key: string): string {
-  const value = frame[key]
-  return typeof value === 'string' ? value : ''
-}
-
-/** Read a numeric field off an untrusted frame. */
-function num(frame: WatchFrame, key: string): number {
-  const value = frame[key]
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
-}
-
-/** Build one inbox entry from a frame, tolerating a newer CLI's extra fields. */
-function entryOf(frame: WatchFrame): InboxEntryData {
-  return {
-    itemId: str(frame, 'itemId'),
-    contentKind: str(frame, 'contentKind'),
-    sourceName: str(frame, 'sourceName'),
-    itemCount: num(frame, 'itemCount'),
-    totalSize: num(frame, 'totalSize'),
-    receivedAt: num(frame, 'receivedAt'),
-  }
-}
-
-/**
- * The live inbox, folded from the subscription.
- *
- * Kept in memory rather than re-queried per session start so that a new
- * conversation's baseline costs nothing: the subscription already told us
- * everything, and re-asking the CLI would race with it.
- */
-class InboxView {
-  /** Newest first, mirroring the CLI's own ordering contract. */
-  private entries: InboxEntryData[] = []
-  private truncated = false
-  private nodeRunning = false
-
-  /** Adopt a whole-value baseline from the stream. */
-  replace(frame: WatchFrame): void {
-    const items = Array.isArray(frame['inbox']) ? frame['inbox'] : []
-    this.entries = items
-      .filter((item): item is WatchFrame => typeof item === 'object' && item !== null)
-      .map(entryOf)
-    this.truncated = frame['inboxHasMore'] === true
-    this.nodeRunning = frame['nodeRunning'] === true
-  }
-
-  add(entry: InboxEntryData): void {
-    this.entries.unshift(entry)
-  }
-
-  remove(itemId: string): void {
-    this.entries = this.entries.filter(entry => entry.itemId !== itemId)
-  }
-
-  /** Snapshot for one session baseline. */
-  baseline(): InboxBaselineData {
-    return {
-      version: 1,
-      items: this.entries.slice(0, BASELINE_LIMIT),
-      // Either the CLI already told us there were older ones, or our own cap bit.
-      hasMore: this.truncated || this.entries.length > BASELINE_LIMIT,
-      nodeRunning: this.nodeRunning,
-    }
-  }
-
-  /** Everything we know about, for the `@` source to fold against. */
-  all(): readonly InboxEntryData[] {
-    return this.entries
-  }
-}
-
-/** Live bridge between the machine-wide subscription and per-session logs. */
+/** Routes machine-wide happenings into the conversations they belong to. */
 export class SwarmDropBridge {
-  private readonly inbox = new InboxView()
   /** transfer id → the agent whose conversation started it. */
   private readonly owners = new Map<TransferId, Agent>()
-  private stop: (() => void) | undefined
 
-  constructor(private readonly ctx: Context) {}
-
-  /** Start the subscription. Safe to call before a SwarmDrop node exists. */
-  start(): void {
-    this.stop = watch(
-      frame => { this.onFrame(frame) },
-      message => { this.ctx.logger('swarmdrop').warn(message) },
-    )
-  }
-
-  /** Tear the subscription down (SIGTERM; the CLI exits 0). */
-  dispose(): void {
-    this.stop?.()
-    this.stop = undefined
-  }
+  constructor(private readonly ctx: Context, private readonly machine: MachineState) {}
 
   /**
    * Claim a transfer this conversation just started.
@@ -144,64 +67,79 @@ export class SwarmDropBridge {
     this.owners.set(transferId, agent)
   }
 
+  /**
+   * Record a send this conversation just started, and claim its frames.
+   *
+   * **One place, because the payload is persisted.** `swarmdrop/sent` lands in
+   * the user's session log and is replayed months later; a six-field literal
+   * written in both the tool and the command is a format edited in two places
+   * with nothing linking them. The command's own docblock argues for exactly
+   * this ("one renderer, not two") — this is the same argument one layer down.
+   *
+   * Claiming happens *before* the append: progress frames for this transfer are
+   * already arriving on the subscription.
+   */
+  recordSend(agent: Agent, peerName: string, result: SendFilesResult) {
+    this.claim(result.sessionId, agent)
+    return agent.session.append('swarmdrop/sent', {
+      version: 1,
+      transferId: result.sessionId,
+      peerName,
+      contentKind: 'files',
+      fileCount: result.fileCount,
+      totalBytes: result.totalBytes,
+    })
+  }
+
   /** Record "here is what you had at hand" on one starting session. */
   recordBaseline(agent: Agent): void {
-    agent.session.append('swarmdrop/inbox-baseline', this.inbox.baseline())
+    agent.session.append('swarmdrop/inbox-baseline', this.machine.baseline())
   }
 
-  /** Everything the inbox holds right now. */
-  entries(): readonly InboxEntryData[] {
-    return this.inbox.all()
-  }
-
-  private onFrame(frame: WatchFrame): void {
+  /**
+   * Route one subscription frame.
+   *
+   * Called for every frame, including the ones this class ignores: the
+   * assembly point fans each frame out to both readers rather than deciding
+   * for them what is interesting.
+   */
+  accept(frame: WatchFrame): void {
     switch (frame.kind) {
-      case 'baseline':
-        this.inbox.replace(frame)
-        return
-      case 'inboxAdded': {
-        const entry = entryOf(frame)
-        this.inbox.add(entry)
-        this.broadcast('swarmdrop/inbox-received', { version: 1, item: entry })
-        return
-      }
-      case 'inboxRemoved':
-        this.inbox.remove(str(frame, 'itemId'))
+      case 'inboxAdded':
+        this.broadcast(entryOf(frame))
         return
       case 'transferChanged':
         this.onTransfer(frame)
         return
-      // Everything else (progress, devices, truncation, node availability) is
-      // machine state rather than something that happened in a conversation.
-      // Recording it would put rows in the transcript that no reader can
-      // account for. Deliberately dropped.
       default:
         return
     }
   }
 
   private onTransfer(frame: WatchFrame): void {
-    const transferId = str(frame, 'sessionId')
+    const transferId = text(frame['sessionId'])
     const agent = this.owners.get(transferId)
     if (agent === undefined) return
 
-    const phase = str(frame, 'phase')
-    const terminalReason = str(frame, 'terminalReason')
+    const phase = text(frame['phase'])
+    const terminalReason = text(frame['terminalReason'])
     this.append(agent, 'swarmdrop/transfer', {
       version: 1,
       transferId,
       phase,
       ...terminalReason === '' ? {} : { terminalReason },
-      transferredBytes: num(frame, 'transferredBytes'),
-      totalBytes: num(frame, 'totalBytes'),
+      transferredBytes: count(frame['transferredBytes']),
+      totalBytes: count(frame['totalBytes']),
     })
     // The terminal phase is the last thing this transfer will ever say.
     if (phase === PHASE_TERMINAL) this.owners.delete(transferId)
   }
 
   /** Append to every top-level conversation. */
-  private broadcast(type: 'swarmdrop/inbox-received', data: { version: 1; item: InboxEntryData }): void {
-    for (const agent of this.ctx.agents.roots()) this.append(agent, type, data)
+  private broadcast(item: InboxEntryData): void {
+    for (const agent of this.ctx.agents.roots()) {
+      this.append(agent, 'swarmdrop/inbox-received', { version: 1, item })
+    }
   }
 
   /**

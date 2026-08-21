@@ -1,16 +1,30 @@
 /**
  * dsh-swarmdrop — the browser half.
  *
- * Everything here is a *contribution to dsh's own surfaces*: two conversation
- * rows and one `@` source. There is no bypass channel to the Node half, and
- * that is the design rather than a limitation — dsh gives third-party plugins
- * no Client→Node RPC by construction (event sourcing: UI state must rebuild
- * from the persisted log), so anything that reached around it would break the
- * moment the user refreshed, paged history, or opened the same session twice.
+ * Everything here is a *contribution to dsh's own surfaces*: a panel at the
+ * sidebar foot, two conversation rows, and one `@` source.
  *
- * The upside is that this half is carrier-agnostic. Someone reaching a dsh
- * running at home from their phone gets the same `@` menu, because the data
- * travels with the session rather than with localhost.
+ * ## Two kinds of data, two carriers
+ *
+ * This file used to state that dsh gives third-party plugins no Client→Node
+ * RPC. That was **wrong** — `ctx.connection.rpc` mounts a channel of this
+ * plugin's own, and `panel-wire.ts` explains the shape. What the old sentence
+ * was reaching for is still true and still load-bearing, so it is worth saying
+ * precisely:
+ *
+ * | Data | Carrier | Why |
+ * |---|---|---|
+ * | conversation rows, `@` candidates | the session log | they must rebuild identically after a refresh, a history page, or a replay three months later |
+ * | node liveness, devices, network | the RPC channel | they are facts about *now*; putting them in a replayable log would make the log lie |
+ *
+ * A side channel feeding the transcript would break the moment the user
+ * refreshed. A session event carrying "the node is up" would be a claim about a
+ * moment, persisted forever, and read back as though it were still true.
+ *
+ * The transcript half stays carrier-agnostic either way: someone reaching a dsh
+ * running at home from their phone gets the same `@` menu, because that data
+ * travels with the session. The panel reaches the same Host over the same
+ * origin, so it works there too.
  */
 
 // ⚠️ `ClientContext` rather than cordis's bare `Context`: the client-side
@@ -20,12 +34,17 @@
 // "Property 'scope' does not exist on type 'SessionStore'" — a confusing error
 // for what is really a wrong import.
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+// Type-only: pulls the locale plugin's Context merge (`ctx.locale`).
+import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { InputTriggerService } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 
 import { createInboxSource } from './inbox-source.js'
+import { en, NS, zh } from './locales.js'
 import {
   ReceivedRow, TransferRow, receivedDefinition, transferDefinition,
 } from './nodes.js'
+import { SwarmDropPanel, type SwarmDropPanelFace } from './panel.js'
+import { createPanelPort } from './panel-port.js'
 
 export const name = 'swarmdrop-client'
 export const inject = ['conversationEvents', 'sessions', 'slots']
@@ -53,4 +72,38 @@ export function apply(ctx: ClientContext): void {
       'swarmdrop: @ inbox source',
     )
   })
+
+  // The panel is optional for the same reason and one more: `connection` is
+  // what carries its channel, and a deployment serving this bundle without it
+  // is not one this plugin should refuse to load into.
+  ctx.inject(['connection', 'locale'], panelCtx => {
+    panelCtx.effect(() => panelCtx.locale.register(NS, { zh, en }), 'swarmdrop: panel dictionaries')
+
+    const port = createPanelPort(panelCtx)
+    panelCtx.effect(() => () => { port.dispose() }, 'swarmdrop: panel port')
+
+    panelCtx.slots.inject('sidebar.footer.action', () => panelCtx.slots.register({
+      name: 'sidebar.footer.action',
+      id: 'swarmdrop-panel',
+      locale: NS,
+      // The component never sees ctx (dsh's hard rule): everything it can read
+      // or do arrives through this face.
+      inject: (): SwarmDropPanelFace => ({
+        hooks: { panel: port.state },
+        onOpenChange: (open: boolean) => { port.setOpen(open) },
+        onStartNode: () => { void port.startNode() },
+        onStopNode: () => { void port.stopNode() },
+        onForget: (peerId: string) => { void port.forget(peerId) },
+        onBeginPair: () => { void port.beginPair() },
+        onCancelPair: () => { void port.cancelPair() },
+        onRespondPair: (pendingId: number, accept: boolean) => {
+          void port.respondPair(pendingId, accept)
+        },
+      }),
+    }, SwarmDropPanel))
+  })
 }
+
+export type { PanelState, PanelPort } from './panel-port.js'
+export type { SwarmDropPanelFace, SwarmDropPanelProps } from './panel.js'
+export type { SwarmDropKey } from './locales.js'

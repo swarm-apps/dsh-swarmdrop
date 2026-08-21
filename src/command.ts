@@ -20,19 +20,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
 
 import type { SwarmDropBridge } from './bridge.js'
-import { call, SwarmDropError } from './cli.js'
-
-interface SendFilesResult {
-  readonly sessionId: string
-  readonly fileCount: number
-  readonly totalBytes: number
-}
-
-interface DeviceRow {
-  readonly peerId: string
-  readonly name: string
-  readonly online: boolean | null
-}
+import {
+  call, SwarmDropError, TRANSFER_TIMEOUT_MS, type DeviceRow, type SendFilesResult,
+} from './cli.js'
+import { presenceLabel, text } from './coerce.js'
 
 /** Split `send ./a.pdf phone` into a verb and its words, tolerating extra spaces. */
 function words(input: string): string[] {
@@ -66,12 +57,13 @@ export function registerCommand(ctx: Context, bridge: SwarmDropBridge): void {
     if (rows.length === 0) {
       return { kind: 'success', text: 'No paired devices yet. Run `swarmdrop invite create` to pair one.' }
     }
-    const text = rows
-      // `null` is *unknown*, not offline: saying "offline" would send the user
-      // to debug their network when the real answer is "no node is running".
-      .map(row => `${row.name} — ${row.online === null ? 'unknown' : row.online ? 'online' : 'offline'}`)
+    // `presenceLabel` keeps "null is unknown, not offline" in one place: saying
+    // "offline" would send the user to debug their network when the real answer
+    // is "no node is running".
+    const lines = rows
+      .map(row => `${text(row.name)} — ${presenceLabel(row.online)}`)
       .join('\n')
-    return { kind: 'success', text }
+    return { kind: 'success', text: lines }
   }
 
   async function send(rest: readonly string[]): Promise<CommandResult> {
@@ -82,16 +74,11 @@ export function registerCommand(ctx: Context, bridge: SwarmDropBridge): void {
     if (to === undefined || paths.length === 0) return { kind: 'error', text: USAGE }
 
     const agent = ctx.agents.requireInitiator()
-    const result = await call<SendFilesResult>(['send', ...paths, '--to', to])
-    bridge.claim(result.sessionId, agent)
-    const event = agent.session.append('swarmdrop/sent', {
-      version: 1,
-      transferId: result.sessionId,
-      peerName: to,
-      contentKind: 'files',
-      fileCount: result.fileCount,
-      totalBytes: result.totalBytes,
-    })
+    const result = await call<SendFilesResult>(
+      ['send', ...paths, '--to', to],
+      TRANSFER_TIMEOUT_MS,
+    )
+    const event = bridge.recordSend(agent, to, result)
     // Point at the event rather than describing it: its conversation node owns
     // the presentation, and that node is the same one the tool path grows.
     return { kind: 'success', sourceEventSeq: event.seq }

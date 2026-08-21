@@ -30,6 +30,7 @@ import type {
 } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 
 import type { InboxReference, SwarmDropInboxProjection } from '../inbox-projection.js'
+import { formatSize } from './format.js'
 
 /** The projection key the Node half owns. */
 const KEY = 'swarmdropInbox'
@@ -40,16 +41,6 @@ function nameOf(item: InboxReference): string {
   // short id is recognisable *and* unique, which is what the roll needs: the
   // decoration pass matches these strings literally.
   return `${item.sourceName.replace(/\s+/gu, '-')}-${item.itemId.slice(0, 8)}`
-}
-
-/** Human-readable size, for the menu row only. */
-function size(bytes: number): string {
-  if (bytes < 1024) return `${String(bytes)} B`
-  const units = ['KiB', 'MiB', 'GiB']
-  let value = bytes / 1024
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1 }
-  return `${value.toFixed(1)} ${String(units[unit])}`
 }
 
 /** Narrow the projection's untyped face. */
@@ -97,7 +88,7 @@ export function createInboxSource(ctx: ClientContext): InputTriggerSource {
           || item.sourceName.toLowerCase().includes(needle))
       return Promise.resolve(matched.map(item => ({
         name: nameOf(item),
-        description: `${String(item.itemCount)} item(s), ${size(item.totalSize)} from ${item.sourceName}`,
+        description: `${String(item.itemCount)} item(s), ${formatSize(item.totalSize)} from ${item.sourceName}`,
       })))
     },
 

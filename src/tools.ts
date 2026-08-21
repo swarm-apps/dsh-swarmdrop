@@ -30,27 +30,16 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 import type { SwarmDropBridge } from './bridge.js'
-import { call, SwarmDropError } from './cli.js'
-
-/** `swarmdrop send` structured result for files. */
-interface SendFilesResult {
-  readonly sessionId: string
-  readonly fileCount: number
-  readonly totalBytes: number
-}
+import {
+  call, SwarmDropError, TRANSFER_TIMEOUT_MS, type DeviceRow, type SendFilesResult,
+} from './cli.js'
+import { count, presenceLabel, text } from './coerce.js'
 
 /** `swarmdrop send --text` structured result. */
 interface SendTextResult {
   readonly deliveryId: string
   readonly peerName: string
   readonly bytes: number
-}
-
-/** One row of `swarmdrop device list`. */
-interface DeviceRow {
-  readonly peerId?: unknown
-  readonly name?: unknown
-  readonly online?: unknown
 }
 
 /** One row of `swarmdrop inbox list`. */
@@ -70,10 +59,6 @@ interface InboxFileRow {
   readonly missing?: unknown
 }
 
-const text = (value: unknown): string => typeof value === 'string' ? value : ''
-const count = (value: unknown): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : 0
-
 /**
  * Turn a CLI failure into something the model can act on.
  *
@@ -82,17 +67,22 @@ const count = (value: unknown): number =>
  * 4 means "the device is asleep, try later", 6 means "stop retrying".
  */
 function explain(error: unknown): never {
-  if (error instanceof SwarmDropError) {
-    const hint = error.exitCode === 3
-      ? ' — no SwarmDrop node is running; the user can start one with `swarmdrop start -d`'
-      : error.exitCode === 4
-        ? ' — that device is not reachable right now; it may be asleep'
-        : error.exitCode === 6
-          ? ' — the peer refused; retrying will be refused again'
-          : ''
-    throw new Error(`${error.message}${hint}`)
-  }
-  throw error
+  if (!(error instanceof SwarmDropError)) throw error
+  const hint = error.exitCode === null ? '' : EXIT_HINTS[error.exitCode] ?? ''
+  throw new Error(`${error.message}${hint}`)
+}
+
+/**
+ * What each exit code means for the model's next move.
+ *
+ * A table rather than a ternary chain, which also makes the gap visible: the CLI
+ * documents six codes and three of them (2 usage, 5 transfer failed) have no
+ * hint because the CLI's own message already says everything actionable.
+ */
+const EXIT_HINTS: Readonly<Record<number, string>> = {
+  3: ' — no SwarmDrop node is running; the user can start one with `swarmdrop start -d`',
+  4: ' — that device is not reachable right now; it may be asleep',
+  6: ' — the peer refused; retrying will be refused again',
 }
 
 export function registerTools(ctx: Context, bridge: SwarmDropBridge): void {
@@ -132,27 +122,17 @@ export function registerTools(ctx: Context, bridge: SwarmDropBridge): void {
       }],
     },
     async execute(args, exec) {
-      const result = await call<SendFilesResult>(['send', ...args.paths, '--to', args.to])
-        .catch(explain)
+      const result = await call<SendFilesResult>(
+        ['send', ...args.paths, '--to', args.to],
+        TRANSFER_TIMEOUT_MS,
+      ).catch(explain)
 
       // ⚠️ `exec.agent` is optional: a nested Code-Mode dispatch has no agent.
       // The send still happened, so the tool still succeeds — but there is no
       // conversation to attribute it to, so no event and no claim. Pretending
       // otherwise would put a row in someone else's transcript.
       const agent = exec.agent
-      if (agent !== undefined) {
-        // Claim *before* returning: progress frames for this transfer are
-        // already arriving on the subscription.
-        bridge.claim(result.sessionId, agent)
-        agent.session.append('swarmdrop/sent', {
-          version: 1,
-          transferId: result.sessionId,
-          peerName: args.to,
-          contentKind: 'files',
-          fileCount: result.fileCount,
-          totalBytes: result.totalBytes,
-        })
-      }
+      if (agent !== undefined) bridge.recordSend(agent, args.to, result)
 
       return {
         transferId: result.sessionId,
@@ -187,6 +167,8 @@ export function registerTools(ctx: Context, bridge: SwarmDropBridge): void {
       }],
     },
     async execute(args) {
+      // Text is capped at 64 KiB by the core, so the query timeout is right —
+      // what it waits for is the peer's acceptance window, not a transfer.
       const result = await call<SendTextResult>(['send', '--text', args.body, '--to', args.to])
         .catch(explain)
       return { deliveryId: result.deliveryId, peerName: result.peerName, bytes: result.bytes }
@@ -229,9 +211,7 @@ export function registerTools(ctx: Context, bridge: SwarmDropBridge): void {
       return rows.map(row => ({
         peerId: text(row.peerId),
         name: text(row.name),
-        presence: row.online === true ? 'online' as const
-          : row.online === false ? 'offline' as const
-            : 'unknown' as const,
+        presence: presenceLabel(row.online),
       }))
     },
   }))

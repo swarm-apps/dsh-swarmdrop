@@ -27,6 +27,9 @@
  * version and the CLI's own `v` is carried through unchanged.
  */
 
+import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
+import type { SessionEventMap } from '@deepseek-ai/dsh-session/types'
+
 /** SwarmDrop transfer session id (uuid). Identity for the transfer node family. */
 export type TransferId = string
 
@@ -133,4 +136,75 @@ declare module '@deepseek-ai/dsh-session/types' {
      */
     'swarmdrop/transfer': TransferChangedData
   }
+}
+
+/**
+ * The event types this plugin owns, as strings.
+ *
+ * The two assertions below make this list impossible to get wrong: `satisfies`
+ * rejects a typo, and `Exhaustive` rejects a *missing* entry by requiring the
+ * list and the `swarmdrop/`-prefixed half of `SessionEventMap` to be mutually
+ * assignable. The second one is the load-bearing half — a forgotten entry is
+ * exactly the failure {@link announceEventTypes} exists to prevent, and it
+ * would otherwise surface weeks later as a conversation that will not open.
+ */
+const OWNED_EVENT_TYPES = [
+  'swarmdrop/inbox-baseline',
+  'swarmdrop/inbox-received',
+  'swarmdrop/sent',
+  'swarmdrop/transfer',
+] as const satisfies readonly (keyof SessionEventMap)[]
+
+/** Every `SessionEventMap` key this plugin declared above. */
+type DeclaredKeys = Extract<keyof SessionEventMap, `swarmdrop/${string}`>
+
+/** `true` only when {@link OWNED_EVENT_TYPES} and {@link DeclaredKeys} agree. */
+type Exhaustive =
+  [DeclaredKeys] extends [typeof OWNED_EVENT_TYPES[number]]
+    ? [typeof OWNED_EVENT_TYPES[number]] extends [DeclaredKeys] ? true : never
+    : never
+
+const _eventListIsComplete: Exhaustive = true
+void _eventListIsComplete
+
+/**
+ * Teach this harness that these four types exist.
+ *
+ * ## Why this is necessary, and why it looks like a hack
+ *
+ * dsh refuses to read a session log containing an event type it does not know
+ * (`PersistenceCoordinator.assertEventsSupported`), unless the event carries an
+ * `ignorable: true` marker. The reasoning is sound — an unrecognized *required*
+ * event may change how the rest of the log must be interpreted, so skipping it
+ * would reconstruct a wrong session.
+ *
+ * The gap is that **neither escape applies to a third-party plugin**:
+ *
+ * - the known set is `KNOWN_SESSION_EVENT_TYPES`, generated from the types
+ *   declared *inside the dsh repository*; and
+ * - `Session.append()` builds the envelope itself and offers no way to set
+ *   `ignorable`.
+ *
+ * dsh knows about this: `known-event-types.ts` says out-of-repo plugin events
+ * are outside the list by construction and "a registration surface for them is
+ * deferred until such a consumer exists". This plugin is that consumer.
+ *
+ * Without this call the failure is severe and delayed: sending one file writes
+ * `swarmdrop/sent` into the session log, and from then on **that conversation
+ * cannot be opened at all** — dsh reports "unknown to this harness" and refuses
+ * the whole log rather than the one row.
+ *
+ * ## What this does not fix
+ *
+ * Announcing the types makes *this* harness read them. It does not put
+ * `ignorable` on the events, so a harness **without** this plugin still refuses
+ * a log that contains them: uninstalling makes those conversations unopenable.
+ * Only dsh can close that half, by letting a writer mark an event ignorable.
+ * Until then the README says to disable rather than uninstall.
+ */
+export function announceEventTypes(): void {
+  // `ReadonlySet` is a compile-time face over a real `Set`; there is no
+  // registration API to call instead.
+  const known = KNOWN_SESSION_EVENT_TYPES as Set<string>
+  for (const type of OWNED_EVENT_TYPES) known.add(type)
 }

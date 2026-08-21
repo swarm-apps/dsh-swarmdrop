@@ -4,22 +4,36 @@
  * Gives a DeepSeek Harness agent a channel to the user's own devices: it can
  * push what it produced straight to their phone, and reference what the phone
  * sent back. No account, no public IP, end-to-end encrypted — the transport is
- * [SwarmDrop](https://github.com/yexiyue/SwarmDrop), driven through its CLI.
+ * [SwarmDrop](https://github.com/swarm-apps/SwarmDrop), driven through its CLI.
  *
  * ## Shape
  *
  * ```
- * cli.ts      the `swarmdrop` binary (one-shot calls + the watch subscription)
- * bridge.ts   machine-wide subscription  →  per-session events
- * tools.ts    what the model can call
- * command.ts  what the person can type
- * types.ts    the Session event family this plugin owns
- * client/     the browser half (conversation nodes, `@` source, device panel)
+ * cli.ts         the `swarmdrop` binary (one-shot calls, watch, pairing)
+ * machine.ts     what this machine looks like, folded from the subscription
+ * pairing.ts     the pairing desk: one window, and who is standing at it
+ * revision.ts    the shared "something changed" counter the panel parks on
+ * bridge.ts      machine-wide happenings  →  per-session events
+ * panel.ts       the browser panel's RPC channel (status, devices, pairing)
+ * panel-wire.ts  the panel's wire contract, compiled by both halves
+ * tools.ts       what the model can call
+ * command.ts     what the person can type
+ * types.ts       the Session event family this plugin owns
+ * client/        the browser half (panel, conversation nodes, `@` source)
  * ```
  *
  * The fragile half is deliberately the *small* half: everything that depends on
  * harness internals lives here and in `client/`, while pairing, transport and
  * the inbox live in SwarmDrop's own repo behind a versioned CLI contract.
+ *
+ * ## One subscription, two readers
+ *
+ * `swarmdrop watch` is spawned once, here, and every frame is handed to both
+ * readers. Neither owns the process, because their lifetimes are the same and
+ * their concerns are not: {@link MachineState} folds state, {@link
+ * SwarmDropBridge} routes conversation-worthy happenings. Letting the bridge
+ * own the subscription (as it once did) meant the panel had to either grow a
+ * second one or reach through it.
  *
  * ## It does not require SwarmDrop to be running
  *
@@ -32,22 +46,63 @@
 import type { Context } from '@deepseek-ai/cordis'
 
 import { SwarmDropBridge } from './bridge.js'
+import { watch } from './cli.js'
 import { registerCommand } from './command.js'
+import { MachineState } from './machine.js'
+import { PairingSession } from './pairing.js'
+import { registerPanel } from './panel.js'
 import { inboxProjectionDefinition } from './projection.js'
+import { Revision } from './revision.js'
 import { registerTools } from './tools.js'
-
-import './types.js'
+import { announceEventTypes } from './types.js'
 
 export const name = 'swarmdrop'
 export const inject = ['agents', 'commands', 'tools']
 
 export function apply(ctx: Context): void {
-  const bridge = new SwarmDropBridge(ctx)
-  bridge.start()
-  ctx.effect(() => () => { bridge.dispose() })
+  // First, before anything can read a session log: dsh refuses a log carrying
+  // event types it does not know, and this plugin's four are not in its
+  // generated set. See `announceEventTypes` for the whole story.
+  announceEventTypes()
+
+  // One counter, two writers: the panel parks on it and is woken by whichever
+  // of them moved. See `revision.ts` for why it is shared rather than per-source.
+  const revision = new Revision()
+  const machine = new MachineState(revision)
+  const pairing = new PairingSession(ctx, revision)
+  const bridge = new SwarmDropBridge(ctx, machine)
+
+  const stop = watch(
+    frame => {
+      // The one frame neither reader folds. It means the CLI dropped events
+      // because this consumer read too slowly — the mirror may now be missing
+      // inbox entries, with nothing that repairs it. Logged rather than
+      // swallowed so a report of "an item never showed up" is diagnosable.
+      if (frame.kind === 'truncated') {
+        ctx.logger('swarmdrop').warn(
+          'the subscription dropped %o event(s); the inbox list may be incomplete until a node restarts',
+          frame['dropped'],
+        )
+      }
+      machine.accept(frame)
+      bridge.accept(frame)
+    },
+    message => { ctx.logger('swarmdrop').warn(message) },
+  )
+  ctx.effect(() => () => {
+    stop()
+    // The pairing window is a live process and an open door: leaving it running
+    // past the plugin's life would keep the node accepting inbound requests
+    // with nothing left to show them to.
+    pairing.dispose()
+  })
 
   registerTools(ctx, bridge)
   registerCommand(ctx, bridge)
+
+  // Optional capability: a deployment with no browser (headless, TUI) has no
+  // `connection` service and simply has no panel. Everything else still works.
+  registerPanel(ctx, { machine, pairing, revision })
 
   // "What you had at hand when this conversation began" is context a reader
   // needs three months later, so it is recorded as a first-class event rather
@@ -65,4 +120,7 @@ export function apply(ctx: Context): void {
 }
 
 export type * from './types.js'
+export type * from './panel-wire.js'
+export type { DeviceState, MachineSnapshot } from './machine.js'
+export type { PairingSession } from './pairing.js'
 export type { InboxReference, SwarmDropInboxProjection } from './inbox-projection.js'

@@ -19,8 +19,28 @@ import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { createInterface } from 'node:readline'
 
-/** How long a one-shot CLI call may take before we give up on it. */
+/**
+ * How long a one-shot CLI call may take before we give up on it.
+ *
+ * Two minutes is generous for a *query* — listing devices, reading the inbox,
+ * asking for status — and those are the only calls it applies to.
+ */
 const CALL_TIMEOUT_MS = 120_000
+
+/**
+ * How long a transfer may take.
+ *
+ * `swarmdrop send` blocks until the transfer reaches a terminal state, and a
+ * large file over a relayed link legitimately runs for hours. Under the query
+ * timeout it was killed at two minutes and reported as a plain failure with no
+ * cause — the worst possible answer, because the transfer was fine and the
+ * user's next move (retry) makes it worse.
+ *
+ * A day rather than no limit at all: something has to bound a call that will
+ * never return, and a transfer still running tomorrow is not one anybody is
+ * waiting on.
+ */
+export const TRANSFER_TIMEOUT_MS = 24 * 60 * 60 * 1_000
 
 /**
  * The binary this plugin drives, resolved once.
@@ -92,8 +112,17 @@ export class SwarmDropError extends Error {
  * parse cannot be broken by a progress line; mixing the two back together here
  * would undo that.
  */
-export async function call<T>(args: readonly string[]): Promise<T> {
-  const { stdout, stderr, code } = await run([...args, '--json'])
+export async function call<T>(args: readonly string[], timeoutMs = CALL_TIMEOUT_MS): Promise<T> {
+  const { stdout, stderr, code, timedOut } = await run([...args, '--json'], timeoutMs)
+  if (timedOut) {
+    // Said plainly rather than relayed as whatever the killed process left on
+    // stderr: "swarmdrop send failed" with no cause sends the user to retry,
+    // and a retry of something that ran out of time takes just as long.
+    throw new SwarmDropError(
+      `swarmdrop ${args.join(' ')} gave up after ${String(Math.round(timeoutMs / 1_000))}s`,
+      code,
+    )
+  }
   if (code !== 0) {
     throw new SwarmDropError(stderr.trim() || `swarmdrop ${args.join(' ')} failed`, code)
   }
@@ -107,12 +136,19 @@ export async function call<T>(args: readonly string[]): Promise<T> {
 }
 
 /** Spawn, collect both streams, resolve when it exits. */
-function run(args: readonly string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
+function run(
+  args: readonly string[],
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }> {
   return new Promise((resolve, reject) => {
     const child = spawn(binary(), args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
-    const timer = setTimeout(() => child.kill('SIGTERM'), CALL_TIMEOUT_MS)
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGTERM')
+    }, timeoutMs)
 
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
@@ -127,9 +163,35 @@ function run(args: readonly string[]): Promise<{ stdout: string; stderr: string;
     })
     child.on('close', code => {
       clearTimeout(timer)
-      resolve({ stdout, stderr, code })
+      resolve({ stdout, stderr, code, timedOut })
     })
   })
+}
+
+/**
+ * `swarmdrop send` structured result for files.
+ *
+ * Lives here rather than in either caller because both `tools.ts` and
+ * `command.ts` send, and the shape they read is the CLI's, not either one's.
+ */
+export interface SendFilesResult {
+  readonly sessionId: string
+  readonly fileCount: number
+  readonly totalBytes: number
+}
+
+/**
+ * One row of `swarmdrop device list`.
+ *
+ * Every field is `unknown` on purpose: this is what a *separate process* said,
+ * and callers coerce with `coerce.ts` before rendering. Typing it as
+ * `{ name: string }` would be a claim about another program's output that
+ * nothing checks.
+ */
+export interface DeviceRow {
+  readonly peerId?: unknown
+  readonly name?: unknown
+  readonly online?: unknown
 }
 
 /** One line off `swarmdrop watch --json`. Relayed verbatim except for parsing. */
@@ -140,6 +202,105 @@ export interface WatchFrame {
   readonly seq: number
   readonly kind: string
   readonly [field: string]: unknown
+}
+
+/**
+ * One long-lived `swarmdrop` subprocess whose stdout is a stream of NDJSON lines.
+ *
+ * Both `watch` and `pair` are this shape, and the fiddly parts are the ones that
+ * are invisible when wrong:
+ *
+ * - **stderr must be consumed.** A piped stream nobody reads fills its buffer
+ *   (64 KiB on Linux, less elsewhere) and then the *child* blocks writing to it
+ *   — forever. For a process that also carries tracing output, that means a
+ *   subscription which silently stops delivering after some hours of logs, with
+ *   no error anywhere. Reading and discarding all but a tail is what prevents it.
+ * - **the stopped flag** guards both child handlers, so a deliberate SIGTERM
+ *   does not read as a crash in the user's logs.
+ * - **a malformed line is skipped, not fatal.** Tearing the stream down would
+ *   lose everything after it, and the CLI is explicit that a newer version's
+ *   output must be able to flow past an older consumer.
+ *
+ * Policy stays with the callers: `watch` wants no stdin, `pair` writes decisions
+ * to it; and each explains its own non-zero exit.
+ */
+interface StreamSpec {
+  readonly args: readonly string[]
+  /** `pipe` when the caller talks back on stdin. */
+  readonly stdin: 'ignore' | 'pipe'
+  onLine(line: string): void
+  onError(message: string): void
+  /** Turn a non-zero exit plus the tail of stderr into one sentence. */
+  explain(stderr: string, code: number | null): string
+}
+
+/** A running stream. Dropping the handle does nothing; `stop()` ends it. */
+interface StreamHandle {
+  /** Write one line to the child's stdin. No-op unless `stdin` was `pipe`. */
+  send(line: string): void
+  stop(): void
+}
+
+/** How much of stderr to keep for the exit message. */
+const STDERR_TAIL = 2_000
+
+function stream(spec: StreamSpec): StreamHandle {
+  // Spawned through two literal calls rather than one with a computed `stdio`:
+  // the tuple has to be a literal for TypeScript to know `stdout` and `stderr`
+  // are streams rather than `null`, and a cast would be claiming that instead of
+  // showing it.
+  const child = spec.stdin === 'pipe'
+    ? spawn(binary(), [...spec.args], { stdio: ['pipe', 'pipe', 'pipe'] })
+    : spawn(binary(), [...spec.args], { stdio: ['ignore', 'pipe', 'pipe'] })
+  let stopped = false
+  let complaint = ''
+
+  // An unhandled `error` on a child stream is an unhandled exception in the dsh
+  // Host process, not just a failed write. The child exiting between a decision
+  // being made and written is ordinary — the `close` handler already reports it.
+  child.stdin?.on('error', () => {})
+
+  child.stderr.setEncoding('utf8')
+  // Consumed even though most of it is discarded — see the module note above.
+  child.stderr.on('data', (chunk: string) => {
+    complaint = `${complaint}${chunk}`.slice(-STDERR_TAIL)
+  })
+
+  child.on('error', err => {
+    if (!stopped) spec.onError(`cannot run \`${binary()} ${spec.args.join(' ')}\`: ${err.message}`)
+  })
+  child.on('close', code => {
+    // Exit 0 after a stop request is the documented shutdown path, not a fault.
+    if (stopped || code === 0) return
+    spec.onError(spec.explain(complaint, code))
+  })
+
+  const lines = createInterface({ input: child.stdout })
+  lines.on('line', line => {
+    if (line.trim() !== '') spec.onLine(line)
+  })
+
+  return {
+    send(line: string): void {
+      if (!stopped) child.stdin?.write(`${line}\n`)
+    },
+    stop(): void {
+      if (stopped) return
+      stopped = true
+      lines.close()
+      child.kill('SIGTERM')
+    },
+  }
+}
+
+/** Parse one NDJSON line, or `undefined` when it is not JSON. */
+function parseLine<T>(line: string): T | undefined {
+  try {
+    return JSON.parse(line) as T
+  } catch {
+    // The stream's problem, not ours: skip it and keep reading.
+    return undefined
+  }
 }
 
 /**
@@ -154,35 +315,112 @@ export interface WatchFrame {
  *   normal shutdown (exit 0) — the plugin's dispose path must not look like a
  *   crash in the user's logs.
  */
-export function watch(onFrame: (frame: WatchFrame) => void, onError: (message: string) => void): () => void {
-  const child = spawn(binary(), ['watch', '--json'], { stdio: ['ignore', 'pipe', 'pipe'] })
-  let stopped = false
-
-  child.on('error', err => {
-    if (!stopped) onError(`cannot run \`${binary()} watch\`: ${err.message}`)
+export function watch(
+  onFrame: (frame: WatchFrame) => void,
+  onError: (message: string) => void,
+): () => void {
+  const handle = stream({
+    args: ['watch', '--json'],
+    stdin: 'ignore',
+    onLine: line => {
+      const frame = parseLine<WatchFrame>(line)
+      if (frame !== undefined) onFrame(frame)
+    },
+    onError,
+    // The subscription's own failures are structural (binary gone, node
+    // unavailable) and the exit code says more than a stray tracing line would.
+    explain: (_stderr, code) => `\`${binary()} watch\` exited with ${String(code)}`,
   })
-  child.on('close', code => {
-    // Exit 0 after a stop request is the documented shutdown path, not a fault.
-    if (!stopped && code !== 0) onError(`\`${binary()} watch\` exited with ${String(code)}`)
+  return handle.stop
+}
+
+/** One line off `swarmdrop invite create --json --decide-from-stdin`. */
+export interface PairFrame {
+  /** `inviteCreated` | `pairingRequest` | `pairingDeclined` | `pairingRequestExpired` | `paired`. */
+  readonly event: string
+  readonly [field: string]: unknown
+}
+
+/** A pairing window that is open for as long as this handle is alive. */
+export interface PairSession {
+  /** Answer one pending request. Unknown ids are ignored by the CLI. */
+  respond(pendingId: number, accept: boolean): void
+  /** Close the window. Every further inbound request is refused by the node. */
+  stop(): void
+}
+
+/**
+ * Open a pairing window and let the caller decide who gets in.
+ *
+ * ## The window is the process
+ *
+ * SwarmDrop's node refuses every inbound pairing request unless something is
+ * waiting for one, and `invite create` running *is* that signal. So this is not
+ * a request/response call: the handle stays alive, and stopping it closes the
+ * window. That is also the security property — an invite that leaks is useless
+ * once nobody is at the desk.
+ *
+ * ## Who decides
+ *
+ * `--decide-from-stdin` routes each request to *this program* instead of a
+ * terminal: the CLI writes `{"event":"pairingRequest","pendingId":N,…}` to
+ * stdout and reads back `{"pendingId":N,"accept":true}`. It is deliberately not
+ * `--auto-accept`, which admits the first device to present any valid invite
+ * with nobody checking — here the request travels to a panel a human is looking
+ * at, which is the whole point.
+ *
+ * @param onFrame - each NDJSON line the CLI emits.
+ * @param onError - the CLI could not be run, or exited unexpectedly.
+ * @returns the live session; `stop()` closes the window.
+ */
+export function pair(
+  onFrame: (frame: PairFrame) => void,
+  onError: (message: string) => void,
+): PairSession {
+  const handle = stream({
+    args: ['invite', 'create', '--json', '--decide-from-stdin'],
+    stdin: 'pipe',
+    onLine: line => {
+      const frame = parseLine<PairFrame>(line)
+      if (frame !== undefined) onFrame(frame)
+    },
+    onError,
+    explain: explainPairingExit,
   })
 
-  const lines = createInterface({ input: child.stdout })
-  lines.on('line', line => {
-    if (line.trim() === '') return
-    let frame: WatchFrame
-    try {
-      frame = JSON.parse(line) as WatchFrame
-    } catch {
-      // A malformed line is the stream's problem, not ours: skip it and keep
-      // reading. Tearing the subscription down would lose everything after it.
-      return
-    }
-    onFrame(frame)
-  })
-
-  return () => {
-    stopped = true
-    lines.close()
-    child.kill('SIGTERM')
+  return {
+    respond(pendingId: number, accept: boolean): void {
+      // One JSON object per line, matching what the CLI's decision channel reads.
+      handle.send(JSON.stringify({ pendingId, accept }))
+    },
+    stop: handle.stop,
   }
+}
+
+/**
+ * Turn a failed pairing process into something the user can act on.
+ *
+ * Three cases, and the first is the one worth the code:
+ *
+ * 1. **The CLI is too old.** `--decide-from-stdin` arrived in 0.5.0, and an
+ *    older binary answers with clap's `unexpected argument`, followed by a usage
+ *    block ending in "For more information, try '--help'". Relaying the last
+ *    line — the obvious thing — shows exactly that, which tells the user
+ *    nothing. This is the likeliest failure for anyone who installed the plugin
+ *    before the CLI caught up, so it gets a sentence of its own.
+ * 2. **The CLI refused for a real reason** (no node, no dialable address). Its
+ *    own words are the best available, and it puts them on the line beginning
+ *    `error:`.
+ * 3. **Anything else** — fall back to the exit code rather than inventing a
+ *    cause.
+ */
+function explainPairingExit(stderr: string, code: number | null): string {
+  if (stderr.includes("unexpected argument '--decide-from-stdin'")) {
+    return 'pairing from the panel needs swarmdrop 0.5.0 or newer; this machine has an older one'
+  }
+  const lines = stderr.split('\n').map(line => line.trim()).filter(line => line !== '')
+  // `error:` is where both clap and the CLI's own failures put the sentence
+  // that matters; the lines around it are usage text and tracing.
+  const stated = lines.find(line => line.startsWith('error:'))
+  return stated ?? lines.at(-1) ?? `pairing exited with ${String(code)}`
 }

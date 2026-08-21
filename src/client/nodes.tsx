@@ -28,6 +28,7 @@ import type {
   ConversationLocation, ConversationNodeContext, ConversationNodeDefinition,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ChatNodeKind, ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import { formatSize } from './format.js'
 
 /**
  * A keyed chat renderer's props, minus the locale.
@@ -77,16 +78,6 @@ interface ReceivedState extends ReceivedChatData {}
 
 function locationOf(context: ConversationNodeContext<unknown>): ConversationLocation {
   return context.start?.location ?? context.matches[0]?.location ?? { kind: 'unresolved' }
-}
-
-/** Human-readable byte count. Pure — these run during replay too. */
-function size(bytes: number): string {
-  if (bytes < 1024) return `${String(bytes)} B`
-  const units = ['KiB', 'MiB', 'GiB']
-  let value = bytes / 1024
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1 }
-  return `${value.toFixed(1)} ${String(units[unit])}`
 }
 
 export const transferDefinition: ConversationNodeDefinition<TransferState> = {
@@ -187,15 +178,15 @@ export function TransferRow({ node }: NodeProps<'swarmdrop-transfer'>) {
   const { peerName, fileCount, totalBytes, transferredBytes, phase, terminalReason } = node.data
   const detail = phase === 'terminal'
     ? terminalReason === 'completed'
-      ? `sent ${String(fileCount)} file(s) · ${size(totalBytes)}`
-      : `${terminalReason ?? 'ended'} · ${size(transferredBytes)} of ${size(totalBytes)}`
-    : `${size(transferredBytes)} of ${size(totalBytes)}`
+      ? `sent ${String(fileCount)} file(s) · ${formatSize(totalBytes)}`
+      : `${terminalReason ?? 'ended'} · ${formatSize(transferredBytes)} of ${formatSize(totalBytes)}`
+    : `${formatSize(transferredBytes)} of ${formatSize(totalBytes)}`
   return createElement('p', { className: 'swarmdrop-row' }, `→ ${peerName} · ${detail}`)
 }
 
 /** One arrival from a paired device. */
 export function ReceivedRow({ node }: NodeProps<'swarmdrop-received'>) {
   const { sourceName, itemCount, totalSize, contentKind } = node.data
-  const what = contentKind === 'text' ? 'a message' : `${String(itemCount)} file(s) · ${size(totalSize)}`
+  const what = contentKind === 'text' ? 'a message' : `${String(itemCount)} file(s) · ${formatSize(totalSize)}`
   return createElement('p', { className: 'swarmdrop-row' }, `← ${sourceName} sent ${what}`)
 }

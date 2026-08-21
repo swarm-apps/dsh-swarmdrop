@@ -37,6 +37,20 @@
   fix: uninstalling still leaves those conversations unopenable, and the
   announcement does not survive a dsh run from a source checkout under `tsx`.
 
+- **The `swarmdrop watch` subscription could wedge and stay wedged.** Its stderr
+  was piped and never read, so once the pipe's buffer filled — 64 KiB of the
+  CLI's own tracing output — the child blocked writing to it and stopped
+  delivering. Nothing reported anything; inbox arrivals simply stopped showing
+  up. Both long-lived subprocesses now drain stderr and keep only a tail for the
+  exit message.
+
+- **A large transfer was killed at two minutes and reported as a plain
+  failure.** `swarmdrop send` blocks until the transfer finishes, and it was
+  running under the timeout meant for queries — so a file that legitimately took
+  longer was SIGTERMed, and the user was told "failed" with no cause, which
+  invites a retry that takes just as long. Transfers now get their own bound, and
+  a timeout says it timed out.
+
 ### Changed
 
 - `bridge.ts` no longer owns the `swarmdrop watch` subscription or folds state.

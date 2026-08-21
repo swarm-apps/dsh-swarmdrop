@@ -28,9 +28,10 @@ jobs:
 
       - run: npm ci
 
-      # Typecheck before publishing. Only the Node half runs here: the browser
-      # half needs a dsh checkout (see the README — its dependency chain is not
-      # resolvable from the registry), so CI cannot cover it yet.
+      # Both halves. They are separate TypeScript programs (dsh augments
+      # `Context.sessions` differently on each side), so `typecheck` runs tsc
+      # twice — a single program would compile the browser half against the
+      # Node service surface and fail somewhere unrelated.
       - run: npm run typecheck
 
       # Refuse to publish a tag that disagrees with package.json. Getting this

@@ -1,6 +1,5 @@
 node_modules/
 lib/
+.client-build/
 *.tsbuildinfo
-tsconfig.dev.json
-package-lock.json
-lib/
+*.tgz

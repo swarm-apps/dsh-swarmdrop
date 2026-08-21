@@ -34,6 +34,12 @@ jobs:
       # Node service surface and fail somewhere unrelated.
       - run: npm run typecheck
 
+      # The pairing state machine and the machine mirror both fold untrusted CLI
+      # output, and one of their guards is a security property (an answer must
+      # match the request the desk is holding). Publishing past a red test would
+      # ship that broken to everyone who runs `dsh plugin add`.
+      - run: npm test
+
       # Refuse to publish a tag that disagrees with package.json. Getting this
       # wrong is silent: npm happily publishes whatever version the manifest
       # says, and the tag then points at a release that does not exist.

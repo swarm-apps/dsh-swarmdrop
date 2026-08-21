@@ -6,5 +6,10 @@
     "declaration": true,
     "declarationDir": "lib/types",
     "sourceMap": false
-  }
+  },
+  "exclude": [
+    "src/client",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
+  ]
 }

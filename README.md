@@ -23,6 +23,34 @@ its CLI.
 | `/swarmdrop send ./report.pdf phone` | Same, without a model round trip. |
 | `@` in the composer | Your inbox — everything your devices sent this machine — as reference candidates. |
 | Your phone sends a file | A row appears in the conversation, and the item becomes referenceable. |
+| **The SwarmDrop button at the sidebar foot** | Node status and network posture, start/stop, your paired devices, and pairing a new one — without leaving dsh for a terminal. |
+
+### The panel
+
+A dot beside Settings says whether a node is running: green for running, amber
+for stopped, grey while the first answer is still in flight. Opening it gives you
+
+- **Node** — running or stopped, its node id, and one button to change that.
+- **Network** — NAT class, relay reservation, bootstrap, connected peers, listen
+  addresses. Shown only while a node is running, because every field would
+  otherwise read "unknown" and say nothing the node row did not.
+- **Devices** — what is paired and whether it is online. `unknown` is its own
+  state, not a synonym for offline.
+- **Pairing** — "Add a device" issues an invite and staffs the desk; the link it
+  shows opens SwarmDrop's own page, which draws the QR code for your phone to
+  scan. When a device shows up you see its name, system, link type and **full
+  node id** before deciding.
+
+Pairing still requires a person to look at the far side's identity — that has not
+been relaxed, only moved. An invite is a one-shot capability that travels as a
+link, and whoever presents it first consumes it, so SwarmDrop's node refuses
+every inbound request unless someone is at the desk.
+
+**The desk stays staffed until you press Cancel**, not until you dismiss the
+panel — you will usually be looking at your phone at that moment, and a popover
+that closes when you click away would take the invite with it. The sidebar dot
+turns amber-grey while a window is open, so a desk left staffed is visible
+without opening anything.
 
 ## Install
 
@@ -53,18 +81,21 @@ itself — nothing else to install. If you already have SwarmDrop from Homebrew
 or the install script and would rather use it, set `SWARMDROP_BIN` to its path
 and the bundled copy is ignored.
 
-**`swarmdrop` 0.4.0 or newer is required** — that is the release that added
-`swarmdrop watch`, which this plugin subscribes to.
+**`swarmdrop` 0.5.0 or newer is required.** 0.4.0 added `swarmdrop watch`, which
+this plugin subscribes to; 0.5.0 added `invite create --decide-from-stdin`, which
+is what lets the panel run the pairing desk. On 0.4.0 everything else works and
+pairing reports that the CLI is too old.
 
-**Pair a device first** — the plugin has nothing to talk to otherwise:
+**Pair a device** from the panel — the plugin has nothing to talk to otherwise.
+The terminal route still works if you prefer it:
 
 ```bash
 swarmdrop invite create      # scan the QR from your phone's SwarmDrop app
 ```
 
 Nothing here requires a SwarmDrop node to be running: the plugin loads cleanly on
-a machine where you have not started one, and the tools say so rather than
-failing mysteriously.
+a machine where you have not started one, the tools say so rather than failing
+mysteriously, and the panel offers to start one.
 
 ## Tools
 
@@ -84,24 +115,44 @@ distinction is the difference between "your phone is asleep" and "start SwarmDro
 
 ```
 src/
-  cli.ts         the `swarmdrop` binary: one-shot calls + the NDJSON subscription
-  bridge.ts      machine-wide subscription  →  per-session events
+  cli.ts         the `swarmdrop` binary: one-shot calls, the subscription, pairing
+  machine.ts     what this machine looks like, folded from the subscription
+  pairing.ts     the pairing desk: one window, and who is standing at it
+  revision.ts    the shared "something changed" counter the panel parks on
+  bridge.ts      machine-wide happenings  →  per-session events
+  panel.ts       the panel's RPC channel (status, devices, pairing)
+  panel-wire.ts  the panel's wire contract, compiled by both halves
   projection.ts  the inbox roll, as a Session projection (what `@` reads)
   tools.ts       what the model can call
   command.ts     what you can type
   types.ts       the Session event family this plugin owns
-  client/        the browser half: conversation rows + the `@` source
+  client/        the browser half: the panel, conversation rows, the `@` source
 ```
 
-Three decisions worth knowing before changing anything:
+Four decisions worth knowing before changing anything:
 
-**The browser half has no back channel, by design.** dsh gives third-party
-plugins no Client→Node RPC — UI state has to rebuild from the persisted event
-log, and a bypass would break the moment you refresh, page history, or open the
-same session twice. So the `@` menu reads a *session projection*: the Node half
-registers a pure fold, the framework drives it over committed events in log
-order, and the browser receives a finished value. The upside is that this works
-under every dsh carrier — including reaching a dsh at home from your phone.
+**Two kinds of data, two carriers.** Conversation rows and `@` candidates travel
+in the *session log*: they must rebuild identically after a refresh, a history
+page, or a replay months later, so the `@` menu reads a session projection — the
+Node half registers a pure fold, the framework drives it over committed events in
+log order, and the browser receives a finished value.
+
+The panel's data does **not** go there. Node liveness, devices and network
+posture are facts about *now*; a session event claiming "the node is up" would be
+a claim about a moment, persisted forever, and read back as though still true. So
+the panel has a channel of its own — `ctx.connection.rpc.handle('/swarmdrop', …)`
+on the Host, `rpc.call` in the browser. Both work under every dsh carrier,
+including reaching a dsh at home from your phone.
+
+> An earlier version of this file said dsh gives third-party plugins no
+> Client→Node RPC. That was wrong. What is true, and load-bearing, is the split
+> above: the transcript rebuilds from the log, and nothing may bypass that.
+
+**The panel long-polls, because it cannot be pushed to.** dsh forwards Host
+events to the browser from a fixed allowlist a third-party plugin cannot extend.
+So the panel parks a request on the Host until something changes — which is not
+a downgrade from a push: the request is already waiting when the change lands, so
+the answer leaves immediately rather than at the next tick of a timer.
 
 **Events record what happened, not what is.** `swarmdrop/sent`,
 `swarmdrop/inbox-received` and `swarmdrop/transfer` are things that occurred at a
@@ -112,6 +163,30 @@ hand when this started" — which is exactly the context a reader needs.
 **Every payload carries a `version`.** These land in your session log, which
 outlives the process and gets replayed. A format change that still parses but
 means something different is the worst failure available.
+
+## A limitation you should know about
+
+dsh refuses to read a session log containing an event type it does not know,
+unless the event is marked `ignorable`. Neither escape is available to a
+third-party plugin: the known set is generated from the types declared inside the
+dsh repository, and `Session.append()` offers no way to set the marker. dsh knows
+— its own source says a registration surface for out-of-repo events "is deferred
+until such a consumer exists".
+
+This plugin is that consumer, so at load it announces its four event types to the
+running harness. That makes them readable here. It does **not** put `ignorable`
+on the events, so:
+
+> **Disable this plugin rather than uninstalling it**, if conversations that used
+> it still matter to you. A harness without the plugin refuses to open a session
+> log containing its events — you would see "unknown to this harness", and the
+> whole conversation, not just the SwarmDrop rows, becomes unreadable.
+
+The announcement also relies on the plugin and dsh resolving the same
+`@deepseek-ai/dsh-session` module instance. That holds for an ordinary install;
+it does not hold when dsh is run from a source checkout under `tsx`, where the
+two halves get separate module graphs and the announcement lands on a copy
+nothing reads.
 
 ## Development
 

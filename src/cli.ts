@@ -17,6 +17,7 @@
 
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 /**
@@ -59,24 +60,60 @@ export const TRANSFER_TIMEOUT_MS = 24 * 60 * 60 * 1_000
  * 3. **`PATH`** — for a global install, and as the honest last resort. If it is
  *    not there either, the spawn fails with a message saying how to install it.
  */
-const binary = (() => {
-  let resolved: string | undefined
-  return (): string => {
-    if (resolved !== undefined) return resolved
-    resolved = process.env['SWARMDROP_BIN'] ?? bundledBinary() ?? 'swarmdrop'
-    return resolved
-  }
-})()
+function binary(): string {
+  // Not cached: `bundledBinary` answers differently once the platform binary has
+  // been fetched, and caching the first answer would pin every later call to the
+  // shim — including the ones that need a signal to reach the real process.
+  return process.env['SWARMDROP_BIN'] ?? bundledBinary() ?? 'swarmdrop'
+}
 
 /**
- * The `swarmdrop` shim shipped alongside this package, if it is installed.
+ * The `swarmdrop` that came with this package, if it is installed.
+ *
+ * ## Two answers, and the difference matters for signals
+ *
+ * The npm package's `bin` is a **Node shim** that `spawnSync`s the real platform
+ * binary. Spawning the shim works, but SIGTERM then lands on the *shim* — the
+ * real process is its child and keeps running. For a long-lived one that is not
+ * a slow shutdown, it is a leak: a pairing window that stays open after the user
+ * pressed Cancel, which is the one thing that must not survive.
+ *
+ * So this prefers the **real binary** and falls back to the shim only when it
+ * has not been fetched yet. `binary.js` is `binary-install`'s own accessor for
+ * that path, and `exists()` is its own answer for whether the fetch has
+ * happened; reconstructing either from the layout would be guessing at an
+ * implementation detail rather than asking it.
+ *
+ * ## Why the shim can be un-fetched at all
+ *
+ * The package fetches its platform binary from a `postinstall` hook, and pnpm
+ * blocks those by default (`Ignored build scripts: swarmdrop`). The shim then
+ * fetches on first use instead — which is why {@link warmBinary} exists.
+ */
+function bundledBinary(): string | undefined {
+  try {
+    const require = createRequire(import.meta.url)
+    const { getPackage } = require('swarmdrop/binary.js') as {
+      getPackage(): { installDirectory: string; binaries: Record<string, string>; exists(): boolean }
+    }
+    const pkg = getPackage()
+    const name = pkg.binaries['swarmdrop']
+    if (name !== undefined && pkg.exists()) return join(pkg.installDirectory, name)
+  } catch {
+    // A layout this code does not know, or the package is simply not installed
+    // (it is optional). Either way, try the shim next.
+  }
+  return bundledShim()
+}
+
+/**
+ * The Node shim, which fetches the platform binary on first use.
  *
  * Resolves `swarmdrop/package.json` rather than the package root: the root has
  * no `main`, so a plain `require.resolve('swarmdrop')` throws even when the
- * package is right there. What we want is its `bin` entry — a Node shim that
- * execs the real platform binary.
+ * package is right there.
  */
-function bundledBinary(): string | undefined {
+function bundledShim(): string | undefined {
   try {
     const require = createRequire(import.meta.url)
     const manifest = require.resolve('swarmdrop/package.json')
@@ -85,10 +122,34 @@ function bundledBinary(): string | undefined {
     if (entry === undefined) return undefined
     return new URL(entry, `file://${manifest}`).pathname
   } catch {
-    // Not installed (it is optional, and platform binaries can legitimately be
-    // skipped). Fall through to PATH.
+    // Not installed. Fall through to PATH.
     return undefined
   }
+}
+
+/**
+ * Make sure the platform binary has been fetched, so later spawns get the real
+ * process rather than the shim.
+ *
+ * One `--version` through the shim is all it takes — `binary-install` fetches
+ * lazily on any run. Costs a few seconds exactly once per install, and only when
+ * pnpm skipped the postinstall hook.
+ *
+ * Failures are ignored on purpose: this is an optimisation for signal delivery,
+ * not a precondition. If it does not work, the shim still runs SwarmDrop.
+ */
+export function warmBinary(): Promise<void> {
+  return new Promise(resolve => {
+    const path = bundledBinary()
+    // Already the real binary (or nothing bundled at all): nothing to fetch.
+    if (path === undefined || !path.endsWith('.js')) {
+      resolve()
+      return
+    }
+    const child = spawn(path, ['--version'], { stdio: 'ignore' })
+    child.on('error', () => { resolve() })
+    child.on('close', () => { resolve() })
+  })
 }
 
 /** A `swarmdrop` call that failed, with the CLI's own words. */

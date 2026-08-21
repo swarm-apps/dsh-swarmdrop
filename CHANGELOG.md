@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.1] - 2026-08-21
+
+### Fixed
+
+- **Cancelling a pairing window left the process running, so the door stayed
+  open.** The npm package's `bin` is a Node shim that spawns the real platform
+  binary; spawning the shim meant SIGTERM landed on it and the real process,
+  its child, kept going. For the pairing desk that is not a slow shutdown — it
+  is the one thing that must not survive the user pressing Cancel, because the
+  running process *is* what makes the node accept inbound requests.
+
+  The plugin now resolves the real binary through `binary-install`'s own
+  accessor and only falls back to the shim before the platform binary has been
+  fetched. It also warms that fetch at load, so the fallback is a first-run
+  detail rather than a standing condition.
+
+  Only reachable through a real install: a developer pointing `SWARMDROP_BIN` at
+  a build has no shim in the path, which is why it survived until the first
+  clean end-to-end run.
+
 ## [0.2.0] - 2026-08-21
 
 ### Added

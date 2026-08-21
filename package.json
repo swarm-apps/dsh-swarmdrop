@@ -1,6 +1,6 @@
 {
   "name": "dsh-swarmdrop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Send files from your DeepSeek Harness agent straight to your phone, and reference what your phone sent back — no account, no public IP, end-to-end encrypted.",
   "license": "MIT",
   "type": "module",

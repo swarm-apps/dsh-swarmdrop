@@ -46,7 +46,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 
 import { SwarmDropBridge } from './bridge.js'
-import { watch } from './cli.js'
+import { warmBinary, watch } from './cli.js'
 import { registerCommand } from './command.js'
 import { MachineState } from './machine.js'
 import { PairingSession } from './pairing.js'
@@ -71,6 +71,17 @@ export function apply(ctx: Context): void {
   const machine = new MachineState(revision)
   const pairing = new PairingSession(ctx, revision)
   const bridge = new SwarmDropBridge(ctx, machine)
+
+  // Fetch the platform binary before anything spawns, if pnpm skipped the
+  // postinstall hook that normally does it. Not for speed — until it has been
+  // fetched, every spawn goes through a Node shim, and SIGTERM then reaches the
+  // shim rather than the process it started. A pairing window has to close when
+  // the user says so; see `bundledBinary`.
+  //
+  // Nothing waits on it: the subscription tolerates being a shim (it only ends
+  // when the whole process tree does), and the calls that must not are the ones
+  // a person triggers later.
+  void warmBinary()
 
   const stop = watch(
     frame => {

@@ -261,8 +261,7 @@ tsdown preset that is not published, so `scripts/build-client.mjs` reimplements
 the wrapper; it is 30 lines. `id` must equal the package name, because that is
 the entry name the host composed into `window.__DSH_BOOT__`.
 
-Two things a reader will otherwise rediscover the hard way:
-Two things a reader will otherwise rediscover the hard way:
+Three things a reader will otherwise rediscover the hard way:
 
 - **The conversation-node cookbook's snippet does not compile as written.**
   `ChatNodeViewProps` bundles `t: TranslateNS<'conversation'>`, but the slot only

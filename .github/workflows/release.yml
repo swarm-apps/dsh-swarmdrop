@@ -1,0 +1,50 @@
+# Publish to npm when a `v*` tag is pushed.
+#
+# Tag-triggered rather than push-to-main: publishing is irreversible (npm's
+# unpublish window is narrow and its rules are strict), so it should take a
+# deliberate act, not a merge.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Lets npm attach a provenance attestation: the published tarball can be
+      # traced back to this workflow run and commit. Costs nothing and is the
+      # difference between "trust the maintainer" and "check the receipt".
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+
+      # Typecheck before publishing. Only the Node half runs here: the browser
+      # half needs a dsh checkout (see the README — its dependency chain is not
+      # resolvable from the registry), so CI cannot cover it yet.
+      - run: npm run typecheck
+
+      # Refuse to publish a tag that disagrees with package.json. Getting this
+      # wrong is silent: npm happily publishes whatever version the manifest
+      # says, and the tag then points at a release that does not exist.
+      - name: Verify the tag matches package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG does not match package.json $PKG" >&2
+            exit 1
+          fi
+
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

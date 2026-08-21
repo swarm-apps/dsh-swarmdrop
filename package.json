@@ -1,7 +1,7 @@
 {
   "name": "dsh-swarmdrop",
   "version": "0.1.0",
-  "description": "Send files from your DeepSeek Harness agent straight to your phone, and reference what your phone sent back — no account, no public IP, end-to-end encrypted.",
+  "description": "Send files from your DeepSeek Harness agent straight to your phone, and reference what your phone sent back \u2014 no account, no public IP, end-to-end encrypted.",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -11,32 +11,18 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./client": {
-      "types": "./lib/types/client/index.d.ts",
-      "default": "./lib/client.js"
-    },
     "./package.json": "./package.json"
   },
-  "dsh": {
-    "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-input-trigger"
-      ]
-    }
-  },
   "files": [
-    "lib/index.js",
-    "lib/client.js",
+    "lib/**/*.js",
     "lib/types/**/*.d.ts",
     "README.md"
   ],
   "scripts": {
-    "bundle": "tsdown",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "typecheck:client": "node scripts/dev-tsconfig.mjs && tsc --noEmit -p tsconfig.dev.json"
+    "typecheck:client": "node scripts/dev-tsconfig.mjs && tsc --noEmit -p tsconfig.dev.json",
+    "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.0",
@@ -57,5 +43,18 @@
   "dependencies": {
     "@deepseek-ai/dsh-session-projection": "^0.0.1-rc.1",
     "zod": "^4.4.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swarm-apps/dsh-swarmdrop.git"
+  },
+  "homepage": "https://github.com/swarm-apps/dsh-swarmdrop#readme",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis-plugin",
+    "swarmdrop",
+    "file-transfer",
+    "p2p"
+  ]
 }

@@ -10,6 +10,11 @@ its CLI.
 
 > **Status: developer preview.** dsh itself declares breaking changes, and this
 > plugin sits on its extension seams. Pin a version.
+>
+> **`0.1.x` ships the Node half only** — the tools, the `/swarmdrop` command and
+> the inbox projection. The browser half (conversation rows, the `@` source) is
+> written and typechecked in this repo but **cannot be published yet**; see
+> [Why the browser half is not in the package](#why-the-browser-half-is-not-in-the-package).
 
 ## What you get
 
@@ -17,8 +22,8 @@ its CLI.
 |---|---|
 | "send the report to my phone" | The agent calls `swarmdrop_send_files`; a transfer row appears in the conversation and follows it to completion. |
 | `/swarmdrop send ./report.pdf phone` | Same, without a model round trip. |
-| `@` in the composer | Your inbox — everything your devices sent this machine — as reference candidates. |
-| Your phone sends a file | A row appears in the conversation, and the item becomes referenceable. |
+| `@` in the composer | Your inbox — everything your devices sent this machine — as reference candidates. *(browser half; not in `0.1.x`)* |
+| Your phone sends a file | The item becomes referenceable, and a row appears in the conversation. *(the row is the browser half; not in `0.1.x`)* |
 
 ## Install
 
@@ -60,6 +65,28 @@ failing mysteriously.
 `presence` is three-valued (`online` / `offline` / `unknown`). `unknown` means no
 SwarmDrop node is running to probe with — it is not the same as offline, and the
 distinction is the difference between "your phone is asleep" and "start SwarmDrop".
+
+## Why the browser half is not in the package
+
+Two upstream blockers, both outside this repo:
+
+1. **dsh's client bundle format is produced by an unpublished preset.** A plugin's
+   `./client` entry is not an ordinary ESM bundle — it is a closure-factory
+   artifact that calls `window.__ModuleLoader__.load({ id, factory })` and
+   resolves externals through an injected `require`. The preset that emits it
+   lives at `packages/client/tsdown.client.ts` inside the dsh monorepo, is not
+   part of any package, and is not on npm. A stock bundler cannot produce a
+   loadable bundle.
+2. **`@deepseek-ai/dsh-compact` is not on npm**, so `@deepseek-ai/dsh-client-runtime`'s
+   dependency chain cannot resolve from the registry at all.
+
+Shipping the `dsh.client` declaration anyway would be worse than omitting it:
+dsh's scanner treats a declared-but-missing bundle as a loud failure and the
+whole plugin's fiber goes FAILED — the tools would stop working too.
+
+The browser sources stay in this repo and typecheck against a dsh checkout
+(`npm run typecheck:client`). When the two blockers clear, the `dsh.client`
+declaration and the `./client` export come back and the version bumps.
 
 ## How it is put together
 

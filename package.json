@@ -1,0 +1,61 @@
+{
+  "name": "dsh-swarmdrop",
+  "version": "0.1.0",
+  "description": "Send files from your DeepSeek Harness agent straight to your phone, and reference what your phone sent back — no account, no public IP, end-to-end encrypted.",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-input-trigger"
+      ]
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/types/**/*.d.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "bundle": "tsdown",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:client": "node scripts/dev-tsconfig.mjs && tsc --noEmit -p tsconfig.dev.json"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.0",
+    "@deepseek-ai/dsh-agent": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-commands": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-session": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.0.1-rc.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.31",
+    "react": "^18.3.1",
+    "typescript": "~5.8.0"
+  },
+  "optionalDependencies": {
+    "swarmdrop": "^0.3.0"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-session-projection": "^0.0.1-rc.1",
+    "zod": "^4.4.3"
+  }
+}

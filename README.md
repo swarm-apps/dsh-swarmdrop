@@ -48,9 +48,10 @@ the dependency and the layer together.
 
 ### The SwarmDrop binary
 
-It comes along as an optional dependency. If you already have it
-(`brew install swarm-apps/tap/swarmdrop`, or the install script), set
-`SWARMDROP_BIN` to point at it instead.
+It comes along as an optional dependency, and the plugin finds that copy
+itself — nothing else to install. If you already have SwarmDrop from Homebrew
+or the install script and would rather use it, set `SWARMDROP_BIN` to its path
+and the bundled copy is ignored.
 
 **`swarmdrop` 0.4.0 or newer is required** — that is the release that added
 `swarmdrop watch`, which this plugin subscribes to.

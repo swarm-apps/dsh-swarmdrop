@@ -16,14 +16,59 @@
  */
 
 import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { createInterface } from 'node:readline'
 
 /** How long a one-shot CLI call may take before we give up on it. */
 const CALL_TIMEOUT_MS = 120_000
 
-/** Resolved once: the binary this plugin drives. */
-function binary(): string {
-  return process.env['SWARMDROP_BIN'] ?? 'swarmdrop'
+/**
+ * The binary this plugin drives, resolved once.
+ *
+ * Three sources, in this order:
+ *
+ * 1. **`SWARMDROP_BIN`** — an explicit override always wins. Someone who
+ *    already has SwarmDrop from Homebrew or the install script points at it
+ *    and skips the optional dependency entirely.
+ * 2. **The copy that came with this package.** `swarmdrop` is an
+ *    `optionalDependency`, so `dsh plugin add` puts it in the profile's
+ *    `node_modules` — but **the profile's `.bin` is not on dsh's `PATH`**, so
+ *    spawning a bare name would never find it. Without this branch the optional
+ *    dependency does nothing at all, and every user needs a second, separate
+ *    global install to make the plugin work.
+ * 3. **`PATH`** — for a global install, and as the honest last resort. If it is
+ *    not there either, the spawn fails with a message saying how to install it.
+ */
+const binary = (() => {
+  let resolved: string | undefined
+  return (): string => {
+    if (resolved !== undefined) return resolved
+    resolved = process.env['SWARMDROP_BIN'] ?? bundledBinary() ?? 'swarmdrop'
+    return resolved
+  }
+})()
+
+/**
+ * The `swarmdrop` shim shipped alongside this package, if it is installed.
+ *
+ * Resolves `swarmdrop/package.json` rather than the package root: the root has
+ * no `main`, so a plain `require.resolve('swarmdrop')` throws even when the
+ * package is right there. What we want is its `bin` entry — a Node shim that
+ * execs the real platform binary.
+ */
+function bundledBinary(): string | undefined {
+  try {
+    const require = createRequire(import.meta.url)
+    const manifest = require.resolve('swarmdrop/package.json')
+    const bin = (require(manifest) as { bin?: Record<string, string> | string }).bin
+    const entry = typeof bin === 'string' ? bin : bin?.['swarmdrop']
+    if (entry === undefined) return undefined
+    return new URL(entry, `file://${manifest}`).pathname
+  } catch {
+    // Not installed (it is optional, and platform binaries can legitimately be
+    // skipped). Fall through to PATH.
+    return undefined
+  }
 }
 
 /** A `swarmdrop` call that failed, with the CLI's own words. */

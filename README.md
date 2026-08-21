@@ -28,19 +28,33 @@ its CLI.
 ## Install
 
 ```bash
-npm i dsh-swarmdrop
+dsh plugin --profile <name> add dsh-swarmdrop
 ```
 
-Then add it to your dsh `cordis.yml`:
+That is all — the package declares a `dsh.bundle`, so dsh appends it to the
+profile's bundle list and its config layer activates on the next start. Verify
+before launching with `dsh --profile <name> --dump-config`, which should show a
+`# == dsh-swarmdrop` layer.
 
-```yaml
-plugins:
-  dsh-swarmdrop:
+`dsh plugin` forwards to pnpm inside the profile directory, so it takes any pnpm
+target — no npm publish required:
+
+```bash
+dsh plugin --profile <name> add /path/to/dsh-swarmdrop     # a local checkout
+dsh plugin --profile <name> add ./dsh-swarmdrop-0.1.0.tgz  # from `npm pack`
 ```
 
-The `swarmdrop` binary comes along as an optional dependency. If you already have
-it (`brew install swarm-apps/tap/swarmdrop`, or the install script), set
+Remove it with `dsh plugin --profile <name> remove dsh-swarmdrop`, which drops
+the dependency and the layer together.
+
+### The SwarmDrop binary
+
+It comes along as an optional dependency. If you already have it
+(`brew install swarm-apps/tap/swarmdrop`, or the install script), set
 `SWARMDROP_BIN` to point at it instead.
+
+**`swarmdrop` 0.4.0 or newer is required** — that is the release that added
+`swarmdrop watch`, which this plugin subscribes to.
 
 **Pair a device first** — the plugin has nothing to talk to otherwise:
 

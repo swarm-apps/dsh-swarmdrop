@@ -1,0 +1,12 @@
+# The config layer this bundle contributes.
+#
+# `dsh plugin add` installs the package; **this file is what makes dsh load it**.
+# Without a `dsh.bundle.patch` manifest pointing here, `dsh plugin` installs the
+# package as a plain dependency, prints a warning, and activates nothing — the
+# tools would simply never appear, with no error to explain why.
+#
+# The row references the package **by name**, not by a relative source path:
+# that is what lets Node's module resolution find the installed code.
+- insert:
+    - id: swarmdrop
+      name: dsh-swarmdrop

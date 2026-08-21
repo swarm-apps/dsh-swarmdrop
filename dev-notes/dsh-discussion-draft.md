@@ -1,5 +1,8 @@
 # 给 deepseek-harness 的 Discussion 草稿
 
+> **已发布** 2026-08-21：
+> [deepseek-ai/deepseek-harness#3802](https://github.com/deepseek-ai/deepseek-harness/discussions/3802)
+
 **渠道**：GitHub Discussions（该仓 issues 已关闭，`CONTRIBUTING.md` 明确「cannot accept
 external pull requests at the moment」，bug 走 Discussions）
 **分类**：General
@@ -118,7 +121,8 @@ session event 承载对话行与 `@` 引用候选。
 
 ## 发之前还要做的
 
-- [ ] 用户过目（本文件的用途）
+- [x] 用户过目
+- [x] **已发布** → #3802
 - [x] **复现代码实跑一遍** —— 2026-08-21 在隔离 profile 里跑通，错误信息与正文逐字一致，
       demo 插件全程装着。跑完已清理：profile、demo 包、以及它造出来的那个坏会话。
 - [x] 给 `swarm-apps/dsh-swarmdrop` 打上 `dsh-plugin` topic

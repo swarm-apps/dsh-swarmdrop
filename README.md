@@ -242,7 +242,7 @@ nothing reads.
 ```bash
 npm install
 npm run typecheck   # both halves
-npm run build       # lib/index.js + lib/client.js
+npm run build       # tsc for the Node half, tsdown for the browser one
 ```
 
 **The two halves compile as separate TypeScript programs, and that is not
@@ -257,9 +257,23 @@ subpaths, which carry no `Context` augmentation.
 `./client` entry to register itself with
 `window.__ModuleLoader__.load({ id, factory })`, resolving externals through an
 injected `require` — no import map, no globals. dsh builds its own with a shared
-tsdown preset that is not published, so `scripts/build-client.mjs` reimplements
-the wrapper; it is 30 lines. `id` must equal the package name, because that is
-the entry name the host composed into `window.__DSH_BOOT__`.
+tsdown preset that is not published, so `tsdown.config.ts` reimplements the
+wrapper as a `banner`/`footer` pair. `id` must equal the package name, because
+that is the entry name the host composed into `window.__DSH_BOOT__`.
+
+Two things about that config are load-bearing rather than stylistic. **tsdown
+runs before `tsc`, not after**, and that ordering is what lets it `clean`:
+`lib` holds both halves and nothing else empties it, so with cleaning off,
+output from a source file deleted three commits ago stays there and `files`
+packs it. Run tsdown second and the same `clean` would delete the Node half
+instead. And the banner is given in object form (`{ js: … }`) because a plain
+string is prepended to *every* chunk: the declaration file would get the
+wrapper too, and stop parsing as TypeScript.
+
+**The two halves' declarations come from different tools**, which is why they
+land in different places: `lib/types/**` mirrors the Node source file by file,
+while the browser half is a single bundled `lib/client.d.ts`. Both are what
+`exports` points at; neither is written by hand.
 
 Three things a reader will otherwise rediscover the hard way:
 

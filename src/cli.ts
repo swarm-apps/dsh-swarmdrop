@@ -230,6 +230,42 @@ function run(
 }
 
 /**
+ * How long `swarmdrop --version` may take.
+ *
+ * Short on purpose: it is the About page's own content, and a page that hangs
+ * waiting for a version number is worse than one that says it could not read it.
+ * The first run through the npm shim can still be slow (it fetches the platform
+ * binary), which is what {@link warmBinary} is for.
+ */
+const VERSION_TIMEOUT_MS = 10_000
+
+/**
+ * The version of the `swarmdrop` this plugin actually runs.
+ *
+ * ⚠️ **Not through {@link call}.** `--version` is clap's own flag: it prints one
+ * line of text and exits before any subcommand runs, so `--json` has nothing to
+ * act on and the output is not JSON. Routing it through `call` would fail with
+ * "returned unparsable output" — a message about parsing, for something that
+ * worked.
+ *
+ * `null` rather than throwing: every reason this can fail (not installed, not
+ * on PATH, a shim that could not fetch) is a *fact about the machine* the page
+ * should state, not an error that takes the page down.
+ */
+export async function cliVersion(): Promise<string | null> {
+  try {
+    const { stdout, code } = await run(['--version'], VERSION_TIMEOUT_MS)
+    if (code !== 0) return null
+    // clap prints `swarmdrop 0.6.0`; take the last field so a longer banner
+    // (a build suffix, a name change) still yields the version rather than ''.
+    const parts = stdout.trim().split(/\s+/)
+    return parts.length > 0 && parts[parts.length - 1] !== '' ? parts[parts.length - 1]! : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * `swarmdrop send` structured result for files.
  *
  * Lives here rather than in either caller because both `tools.ts` and
@@ -277,7 +313,11 @@ export interface WatchFrame {
  *   subscription which silently stops delivering after some hours of logs, with
  *   no error anywhere. Reading and discarding all but a tail is what prevents it.
  * - **the stopped flag** guards both child handlers, so a deliberate SIGTERM
- *   does not read as a crash in the user's logs.
+ *   does not read as a crash in the user's logs. It is the *only* thing that
+ *   silences an exit by default: which exit codes are expected is the caller's
+ *   business, expressed by {@link StreamSpec.explain} returning `null`. An exit
+ *   the layer decided to swallow on the caller's behalf is how a subscription
+ *   ends up dead with nobody told.
  * - **a malformed line is skipped, not fatal.** Tearing the stream down would
  *   lose everything after it, and the CLI is explicit that a newer version's
  *   output must be able to flow past an older consumer.
@@ -291,8 +331,17 @@ interface StreamSpec {
   readonly stdin: 'ignore' | 'pipe'
   onLine(line: string): void
   onError(message: string): void
-  /** Turn a non-zero exit plus the tail of stderr into one sentence. */
-  explain(stderr: string, code: number | null): string
+  /**
+   * Turn an exit plus the tail of stderr into one sentence, or `null` when this
+   * exit is an expected end rather than trouble.
+   *
+   * Called for **every** exit the caller did not ask for, including code 0.
+   * The two callers disagree about what a clean exit means — `pair` exits 0 the
+   * moment a device is admitted, while a subscription that exits 0 has still
+   * stopped delivering — and that disagreement is exactly what belongs here
+   * rather than in a blanket rule inside {@link stream}.
+   */
+  explain(stderr: string, code: number | null): string | null
 }
 
 /** A running stream. Dropping the handle does nothing; `stop()` ends it. */
@@ -331,9 +380,10 @@ function stream(spec: StreamSpec): StreamHandle {
     if (!stopped) spec.onError(`cannot run \`${binary()} ${spec.args.join(' ')}\`: ${err.message}`)
   })
   child.on('close', code => {
-    // Exit 0 after a stop request is the documented shutdown path, not a fault.
-    if (stopped || code === 0) return
-    spec.onError(spec.explain(complaint, code))
+    // A stop we asked for is the documented shutdown path, not a fault.
+    if (stopped) return
+    const message = spec.explain(complaint, code)
+    if (message !== null) spec.onError(message)
   })
 
   const lines = createInterface({ input: child.stdout })
@@ -372,13 +422,19 @@ function parseLine<T>(line: string): T | undefined {
  * is what lets us spawn it at plugin load without caring whether the user has
  * started SwarmDrop yet.
  *
+ * @param onEnded - the subscription is over, for whatever reason. **Every**
+ *   unrequested exit reaches it, including a clean one: `swarmdrop watch`
+ *   handles `SIGTERM` and exits 0, so a subscription killed by anything other
+ *   than this plugin's own `stop()` ends *quietly* unless code 0 counts as
+ *   trouble here. It used to not count, and the result was a panel that went on
+ *   serving a frozen mirror — devices, inbox and node liveness all stuck at
+ *   whatever they were when the process died, with nothing on screen saying so.
  * @returns a stop function. It sends `SIGTERM`, which the CLI treats as a
- *   normal shutdown (exit 0) — the plugin's dispose path must not look like a
- *   crash in the user's logs.
+ *   normal shutdown — `stopped` is what keeps that from reaching `onEnded`.
  */
 export function watch(
   onFrame: (frame: WatchFrame) => void,
-  onError: (message: string) => void,
+  onEnded: (message: string) => void,
 ): () => void {
   const handle = stream({
     args: ['watch', '--json'],
@@ -387,9 +443,11 @@ export function watch(
       const frame = parseLine<WatchFrame>(line)
       if (frame !== undefined) onFrame(frame)
     },
-    onError,
+    onError: onEnded,
     // The subscription's own failures are structural (binary gone, node
     // unavailable) and the exit code says more than a stray tracing line would.
+    // No code is exempt: for a stream that is supposed to run forever, having
+    // exited *is* the news.
     explain: (_stderr, code) => `\`${binary()} watch\` exited with ${String(code)}`,
   })
   return handle.stop
@@ -459,9 +517,13 @@ export function pair(
 }
 
 /**
- * Turn a failed pairing process into something the user can act on.
+ * Turn a pairing process's exit into something the user can act on.
  *
- * Three cases, and the first is the one worth the code:
+ * **Exit 0 is not a failure**: the CLI exits the moment a device is admitted,
+ * and the `paired` frame already said so. Reporting it would put an error under
+ * every successful pairing.
+ *
+ * Three failure cases, and the first is the one worth the code:
  *
  * 1. **The CLI is too old.** `--decide-from-stdin` arrived in 0.5.0, and an
  *    older binary answers with clap's `unexpected argument`, followed by a usage
@@ -475,7 +537,8 @@ export function pair(
  * 3. **Anything else** — fall back to the exit code rather than inventing a
  *    cause.
  */
-function explainPairingExit(stderr: string, code: number | null): string {
+function explainPairingExit(stderr: string, code: number | null): string | null {
+  if (code === 0) return null
   if (stderr.includes("unexpected argument '--decide-from-stdin'")) {
     return 'pairing from the panel needs swarmdrop 0.5.0 or newer; this machine has an older one'
   }

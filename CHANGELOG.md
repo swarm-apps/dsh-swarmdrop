@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.3.0] - 2026-08-21
+
+### Added
+
+- **A SwarmDrop page in dsh's Settings.** Seven sections behind a nav column:
+  overview (node, network, devices), invites, inbox, transfers, this machine's
+  settings, bootstrap nodes, and about. The sidebar panel stays what it was —
+  a status light — and the page carries everything that needs room.
+- **Invites can be revoked from the UI.** An invite is valid for 24 hours,
+  survives restarts, and whoever holds it can pair; revoking was previously
+  possible only from a terminal.
+- **The inbox is listed in full**, with where each item landed and an export
+  destination.
+- **Transfers can be paused, resumed and cancelled**, with only the controls
+  the CLI will actually accept offered per row.
+- **The device name and receive directory are editable**, showing which of the
+  three sources (environment variable / persisted / built-in default) a value
+  comes from — and what is being held down when an environment variable wins.
+  Requires `swarmdrop` 0.6.0.
+- **Bootstrap / relay nodes can be listed, added and removed**, each with its
+  connection and relay state and the kernel's own error text when a relay will
+  not come up. Requires `swarmdrop` 0.6.0.
+- **The panel's inbox count expands in place** to the newest few entries. It
+  does not link to the page: dsh gives `openSection` only to onboarding
+  entries, so a plugin cannot open Settings on its own section.
+- **A section needing a newer `swarmdrop` says so in one sentence**, instead of
+  surfacing clap's usage text to someone who typed nothing.
+
+### Changed
+
+- The panel's state answer now carries the newest few inbox entries, so
+  expanding the count costs no process.
+
+### Fixed
+
+- **The panel's controls could stop responding, with nothing on screen saying
+  why.** Two independent causes, both structural. `busy` was one flag for the
+  whole panel, so a single unsettled call disabled node start/stop, unpair
+  *and* pairing at once; it is now keyed per control, and a slow unpair leaves
+  the node buttons usable. And browser-side RPC has no timeout of its own, so a
+  request that never settled left the `finally` clearing `busy` unrun — the
+  control stayed disabled for the life of the page. Every call now has a
+  deadline, set above the matching Host-side bound so it is a watchdog on the
+  transport rather than a policy on how long an action may take.
+
+- **The machine subscription died silently and never came back.** `swarmdrop
+  watch` exits 0 after handling SIGTERM, and the stream layer exempted exit 0
+  from being reported — so any end of that process read as an expected one.
+  Nothing restarted it, and the panel went on presenting a frozen mirror as
+  current. Exits are now reported unless the caller asked for the stop, the
+  subscription is supervised with exponential backoff (1 s to 30 s, reset on a
+  frame rather than on a spawn), and while it is down the panel says so above
+  the facts it qualifies — a mirror that stopped updating is otherwise
+  indistinguishable from a machine where nothing is happening.
+
+- **The sidebar entry used a generic share icon.** It is SwarmDrop's own mark
+  now, drawn in `currentColor` so it follows the theme and hover state.
+
 ## [0.2.1] - 2026-08-21
 
 ### Fixed

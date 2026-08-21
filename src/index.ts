@@ -46,13 +46,14 @@
 import type { Context } from '@deepseek-ai/cordis'
 
 import { SwarmDropBridge } from './bridge.js'
-import { warmBinary, watch } from './cli.js'
+import { warmBinary } from './cli.js'
 import { registerCommand } from './command.js'
 import { MachineState } from './machine.js'
 import { PairingSession } from './pairing.js'
 import { registerPanel } from './panel.js'
 import { inboxProjectionDefinition } from './projection.js'
 import { Revision } from './revision.js'
+import { WatchSubscription } from './subscription.js'
 import { registerTools } from './tools.js'
 import { announceEventTypes } from './types.js'
 
@@ -83,8 +84,8 @@ export function apply(ctx: Context): void {
   // a person triggers later.
   void warmBinary()
 
-  const stop = watch(
-    frame => {
+  const subscription = new WatchSubscription({
+    onFrame: frame => {
       // The one frame neither reader folds. It means the CLI dropped events
       // because this consumer read too slowly — the mirror may now be missing
       // inbox entries, with nothing that repairs it. Logged rather than
@@ -98,10 +99,15 @@ export function apply(ctx: Context): void {
       machine.accept(frame)
       bridge.accept(frame)
     },
-    message => { ctx.logger('swarmdrop').warn(message) },
-  )
+    // Health is a fact about this machine like any other, so it rides the same
+    // counter and reaches the panel through the request already parked on it.
+    onHealth: trouble => {
+      if (trouble !== null) ctx.logger('swarmdrop').warn(trouble)
+      revision.bump()
+    },
+  })
   ctx.effect(() => () => {
-    stop()
+    subscription.dispose()
     // The pairing window is a live process and an open door: leaving it running
     // past the plugin's life would keep the node accepting inbound requests
     // with nothing left to show them to.
@@ -113,7 +119,7 @@ export function apply(ctx: Context): void {
 
   // Optional capability: a deployment with no browser (headless, TUI) has no
   // `connection` service and simply has no panel. Everything else still works.
-  registerPanel(ctx, { machine, pairing, revision })
+  registerPanel(ctx, { machine, pairing, revision, subscription })
 
   // "What you had at hand when this conversation began" is context a reader
   // needs three months later, so it is recorded as a first-class event rather

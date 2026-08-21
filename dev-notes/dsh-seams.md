@@ -74,6 +74,42 @@ inject: (): MyFace => ({
 
 ---
 
+### `settings.section`：第三方能拿到的**整页**
+
+`settings.section` 是 list slot、`scope: 'root'`、additive（`replaceRisk: none`），注册形态
+与其它 slot 一致，只是多两个 option：
+
+```ts
+ctx.slots.inject('settings.section', () => ctx.slots.register({
+  name: 'settings.section',
+  id: 'swarmdrop',     // 导航项标识
+  order: 40,           // 导航位置。dsh 自己的：通用 0、插件 15
+  label: () => t('nav'),  // **注册方自己出文案**——shell 一句自己的都不留
+  locale: NS,
+  inject: () => face,
+}, Component))
+```
+
+组件拿到的 owner props **只有 `close()`**（关掉设置面板），其余数据一律经 `inject` 面。
+locale 变了时由注册方重新注册，shell 不订阅 locale——那次 ledger bump 就是它的重渲染信号。
+
+⚠️ **插件打不开自己那一页。** `openSection` 只发给 `settings.onboarding` 条目
+（见 `SettingsOnboardingOwnerProps`），`settings.section` 的 owner props 里没有它。
+于是侧栏面板做不出「点这里去设置页」——它只能就地展开自己手上已有的东西，打开设置得靠用户
+自己。推论：**凡是只有设置页有的入口，必须从设置页自身找得到**，不能指望面板把人领过去。
+
+⚠️ 类型来自 `@deepseek-ai/dsh-client-ui-settings/client` 的 SlotMap 合并，**只能 type-only
+import**（值导入会把那个包打进 bundle，见上面的 peerDependencies 那条）。
+
+### 每一节都是一个进程：设置页不许轮询
+
+本插件的每一节都要 spawn 一个 `swarmdrop`。面板能长轮询是因为 Host 替它把请求停在那儿；
+设置页没有这个条件。所以形态是**打开时取一次 + 用户点刷新再取**，而「活的那一半」
+（节点存活、设备表、配对台）压根不取——它已经在面板的订阅里，页面直接读同一个 store。
+
+导航（而不是一页七节）也是这条的推论：一页全渲染等于开页就 spawn 六个进程，其中五个的内容
+还在折叠线以下。
+
 ## Client→Node：三条路，一条适合插件
 
 | 路 | 能不能用 | 判据 |

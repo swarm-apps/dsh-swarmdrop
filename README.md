@@ -24,6 +24,7 @@ its CLI.
 | `@` in the composer | Your inbox — everything your devices sent this machine — as reference candidates. |
 | Your phone sends a file | A row appears in the conversation, and the item becomes referenceable. |
 | **The SwarmDrop button at the sidebar foot** | Node status and network posture, start/stop, your paired devices, and pairing a new one — without leaving dsh for a terminal. |
+| **Settings → SwarmDrop** | Everything that needs room: invites and revoking them, the whole inbox, transfer history and its controls, this machine's name and receive directory, bootstrap nodes. |
 
 ### The panel
 
@@ -51,6 +52,39 @@ panel — you will usually be looking at your phone at that moment, and a popove
 that closes when you click away would take the invite with it. The sidebar dot
 turns amber-grey while a window is open, so a desk left staffed is visible
 without opening anything.
+
+### The settings page
+
+The panel is a status light; the page is where the occasional work happens.
+Seven sections, each read when you open it and re-read when you ask — never on
+a timer, because every one of them costs a `swarmdrop` process.
+
+- **Overview** — the panel's facts, unabbreviated: every listen address, the
+  full node id, every paired device with its identity.
+- **Invites** — what this machine has handed out, and one button to take it
+  back. An invite is valid for 24 hours, survives restarts, and whoever holds
+  it can pair, so this is the only way to stop one that leaked.
+- **Inbox** — everything that arrived, where it landed, and exporting a copy
+  elsewhere.
+- **Transfers** — history, with pause / resume / cancel offered only where the
+  CLI will accept them.
+- **Settings** — this machine's device name and receive directory. Each value
+  says where it comes from, and when an environment variable is winning it says
+  what is being held down — otherwise you would edit a field that does nothing.
+- **Bootstrap** — the relay and bootstrap nodes this machine uses, their
+  connection state, and the kernel's own words when one will not come up. Your
+  additions and removals layer over the built-in list rather than replacing it,
+  so a release that changes the built-in addresses still reaches you.
+- **About** — plugin and `swarmdrop` versions, and a check for a newer one.
+
+The last two need **`swarmdrop` 0.6.0 or newer**; with an older one they say so
+rather than showing you an argument-parsing error.
+
+> **The panel cannot open this page.** dsh hands `openSection` only to
+> `settings.onboarding` entries, so a plugin has no way to open Settings on its
+> own section. The panel expands what it already has in place and leaves opening
+> Settings to you — which is why anything the page is the only home for has to
+> be findable from Settings alone.
 
 ## Install
 
@@ -128,6 +162,8 @@ src/
   bridge.ts      machine-wide happenings  →  per-session events
   panel.ts       the panel's RPC channel (status, devices, pairing)
   panel-wire.ts  the panel's wire contract, compiled by both halves
+  console.ts     the settings page's two routes: read a section, run an action
+  console-wire.ts  the page's wire contract, compiled by both halves
   projection.ts  the inbox roll, as a Session projection (what `@` reads)
   tools.ts       what the model can call
   command.ts     what you can type
@@ -165,6 +201,13 @@ the answer leaves immediately rather than at the next tick of a timer.
 point in time, so replaying a conversation months later still explains it. The
 one whole-value event, `swarmdrop/inbox-baseline`, answers "what did you have at
 hand when this started" — which is exactly the context a reader needs.
+
+**The panel long-polls; the page does not poll at all.** The panel can afford a
+parked request because the Host holds it open. Nothing on the settings page can:
+every section is a `swarmdrop` process, so a section is read when you open it
+and when you ask, and the live half (node liveness, devices, pairing) is not
+re-read at all — it already arrives on the panel's subscription, and the page
+reads the same store.
 
 **Every payload carries a `version`.** These land in your session log, which
 outlives the process and gets replayed. A format change that still parses but

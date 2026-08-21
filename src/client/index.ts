@@ -38,6 +38,8 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { InputTriggerService } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 
+import { SwarmDropConsole, type SwarmDropConsoleFace } from './console.js'
+import { createConsolePort } from './console-port.js'
 import { createInboxSource } from './inbox-source.js'
 import { en, NS, zh } from './locales.js'
 import {
@@ -78,9 +80,40 @@ export function apply(ctx: ClientContext): void {
   // is not one this plugin should refuse to load into.
   ctx.inject(['connection', 'locale'], panelCtx => {
     panelCtx.effect(() => panelCtx.locale.register(NS, { zh, en }), 'swarmdrop: panel dictionaries')
+    // The nav label is registrant-owned copy: the settings shell keeps none of
+    // its own, and re-registers on locale change through the ledger bump.
+    const t = panelCtx.locale.bind(NS)
 
     const port = createPanelPort(panelCtx)
     panelCtx.effect(() => () => { port.dispose() }, 'swarmdrop: panel port')
+
+    // The settings page shares this port for the live half — node liveness and
+    // the device table are already arriving on the panel's subscription, and
+    // fetching them a second time would spawn a process to learn what the
+    // browser already knows.
+    const consolePort = createConsolePort(panelCtx)
+    panelCtx.effect(() => () => { consolePort.dispose() }, 'swarmdrop: console port')
+
+    panelCtx.slots.inject('settings.section', () => panelCtx.slots.register({
+      name: 'settings.section',
+      id: 'swarmdrop',
+      // After dsh's own entries (General is 0, Plugins is 15): this is a
+      // feature page, and pushing it above the shell's own would be a plugin
+      // claiming the top of a nav it does not own.
+      order: 40,
+      label: () => t('name'),
+      locale: NS,
+      inject: (): SwarmDropConsoleFace => ({
+        hooks: { panel: port.state, console: consolePort.state },
+        onOpenSection: section => { consolePort.load(section) },
+        onRefresh: section => { consolePort.refresh(section) },
+        onAct: action => { consolePort.act(action) },
+        onDismiss: () => { consolePort.dismiss() },
+        onStartNode: () => { void port.startNode() },
+        onStopNode: () => { void port.stopNode() },
+        onForget: (peerId: string) => { void port.forget(peerId) },
+      }),
+    }, SwarmDropConsole))
 
     panelCtx.slots.inject('sidebar.footer.action', () => panelCtx.slots.register({
       name: 'sidebar.footer.action',
@@ -106,4 +139,6 @@ export function apply(ctx: ClientContext): void {
 
 export type { PanelState, PanelPort } from './panel-port.js'
 export type { SwarmDropPanelFace, SwarmDropPanelProps } from './panel.js'
+export type { ConsoleState, ConsolePort } from './console-port.js'
+export type { SwarmDropConsoleFace, SwarmDropConsoleProps } from './console.js'
 export type { SwarmDropKey } from './locales.js'

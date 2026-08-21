@@ -28,7 +28,7 @@ import {
 } from 'react'
 import {
   Button, IconCheckOutline16, IconCloseOutline16, IconCopyOutline16, IconPlayOutline16,
-  IconPlusOutline16, IconRefreshOutline14, IconRightUpOutline16, IconShareOutline16,
+  IconPlusOutline16, IconRefreshOutline14, IconRightUpOutline16,
   IconStopFill16, IconTrashOutline16, StateDot, useDismissOnOutsidePointer, writeClipboard,
   type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -37,8 +37,9 @@ import type { HostObservable, InjectFace, PropsLocale, PropsRuntime } from '@dee
 // entry) into this program so PropsRuntime below resolves against the real one.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 
+import { SwarmDropMark } from './brand.js'
 import type { PairingRequestView, PanelDevice } from '../panel-wire.js'
-import type { PanelState } from './panel-port.js'
+import { deviceKey, type PanelState } from './panel-port.js'
 import type { SwarmDropKey } from './locales.js'
 
 /** What the slot entry hands this component. */
@@ -142,6 +143,21 @@ const errorStyle: CSSProperties = {
   wordBreak: 'break-word',
 }
 
+/**
+ * The band that says the facts below are stale.
+ *
+ * Warning rather than error: nothing is broken from the user's side and the
+ * Host is already retrying — what it costs them is trusting what they read.
+ */
+const staleStyle: CSSProperties = {
+  marginTop: 6,
+  padding: '4px 8px',
+  borderRadius: 6,
+  fontSize: 11,
+  color: 'var(--dsw-alias-state-warning-primary)',
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+}
+
 /** A one-line aside under something, in the muted voice. */
 const hintStyle: CSSProperties = { ...mutedStyle, fontSize: 11, marginTop: 6 }
 
@@ -220,13 +236,12 @@ export function SwarmDropPanel({
 
   const toggle = useCallback(() => { setOpen(current => !current) }, [])
 
-  const busy = state.busy !== null
   const label = t('name')
   const pairingIsLive = state.pairing.phase !== 'idle'
   const pairingSection = (
     <PairingSection
       pairing={state.pairing}
-      busy={busy}
+      busy={state.busy.includes('pair')}
       onBeginPair={onBeginPair}
       onCancelPair={onCancelPair}
       onRespondPair={onRespondPair}
@@ -243,7 +258,7 @@ export function SwarmDropPanel({
         aria-expanded={open}
         title={label}
         style={{ width: '100%', justifyContent: wide ? 'flex-start' : 'center', gap: 8 }}
-        icon={<IconShareOutline16 />}
+        icon={<SwarmDropMark />}
       >
         {wide ? (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -266,11 +281,17 @@ export function SwarmDropPanel({
         >
           <div style={{ ...rowStyle, marginBottom: 4 }}>
             <strong>{label}</strong>
-            {state.busy !== null && <IconRefreshOutline14 />}
+            {state.busy.length > 0 && <IconRefreshOutline14 />}
           </div>
 
           {state.error !== null && <div style={errorStyle}>{state.error}</div>}
           {state.actionError !== null && <div style={errorStyle}>{state.actionError}</div>}
+          {/* Above everything it qualifies, because it qualifies everything:
+              while the subscription is down these are the last facts it sent,
+              not the current ones. */}
+          {state.subscription !== null && (
+            <div style={staleStyle} title={state.subscription}>{t('stale')}</div>
+          )}
 
           {/* Pairing leads while it is live. The panel is taller than a short
               window, and a request waiting for a decision below the fold is a
@@ -278,18 +299,20 @@ export function SwarmDropPanel({
           {pairingIsLive && pairingSection}
           <NodeSection
             state={state}
-            busy={busy}
+            busy={state.busy.includes('node')}
             onStartNode={onStartNode}
             onStopNode={onStopNode}
             t={t}
           />
           <NetworkSection network={state.network} nodeRunning={state.nodeRunning} t={t} />
-          <DeviceSection devices={state.devices} busy={busy} onForget={onForget} t={t} />
+          <DeviceSection devices={state.devices} busy={state.busy} onForget={onForget} t={t} />
           {!pairingIsLive && pairingSection}
 
-          <div style={sectionStyle}>
-            <Fact label={t('inbox')}>{t('inboxCount', { count: state.inboxCount })}</Fact>
-          </div>
+          <InboxSection
+            count={state.inboxCount}
+            recent={state.inboxRecent}
+            t={t}
+          />
         </div>
       )}
     </div>
@@ -298,6 +321,58 @@ export function SwarmDropPanel({
 
 /** Translator bound to this plugin's dictionary. */
 type Translate = SwarmDropPanelProps['t']
+
+/**
+ * The inbox count, which expands into the newest few entries.
+ *
+ * **Expands in place rather than opening Settings.** dsh hands `openSection`
+ * only to `settings.onboarding` entries, so a plugin cannot open the settings
+ * panel on its own page — a row that looked like a link would have nowhere to
+ * go. What it can do is show what it already has: the entries ride along on the
+ * state answer (see `PanelInboxEntry`), so expanding costs nothing.
+ *
+ * The full list, with export, lives on the settings page the user opens
+ * themselves.
+ */
+function InboxSection({ count, recent, t }: {
+  count: number
+  recent: PanelState['inboxRecent']
+  t: Translate
+}) {
+  const [open, setOpen] = useState(false)
+  const expandable = recent.length > 0
+
+  return (
+    <div style={sectionStyle}>
+      <div style={rowStyle}>
+        <span style={mutedStyle}>{t('inbox')}</span>
+        {expandable ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={open}
+            onClick={() => { setOpen(current => !current) }}
+          >
+            {t('inboxCount', { count })}
+          </Button>
+        ) : <span>{t('inboxCount', { count })}</span>}
+      </div>
+      {open && recent.map(entry => (
+        <div key={entry.itemId} style={{ ...hintStyle, marginTop: 4 }}>
+          {entry.sourceName === '' ? t('unnamedDevice') : entry.sourceName}
+          {' · '}
+          {t('inboxCount', { count: entry.itemCount })}
+        </div>
+      ))}
+      {/* The panel deliberately stops here. Anything more — the whole list,
+          where a file landed, exporting it — is the settings page's, which has
+          room for it and is not competing with a status light for space. */}
+      {open && count > recent.length && (
+        <div style={{ ...hintStyle, marginTop: 4 }}>{t('inboxMore')}</div>
+      )}
+    </div>
+  )
+}
 
 function NodeSection({ state, busy, onStartNode, onStopNode, t }: {
   state: PanelState
@@ -364,7 +439,8 @@ function NetworkSection({ network, nodeRunning, t }: {
 
 function DeviceSection({ devices, busy, onForget, t }: {
   devices: readonly PanelDevice[]
-  busy: boolean
+  /** The whole busy set: each row reads only its own key out of it. */
+  busy: PanelState['busy']
   onForget: (peerId: string) => void
   t: Translate
 }) {
@@ -374,7 +450,13 @@ function DeviceSection({ devices, busy, onForget, t }: {
       {devices.length === 0
         ? <div style={mutedStyle}>{t('noDevices')}</div>
         : devices.map(device => (
-          <DeviceRow key={device.peerId} device={device} busy={busy} onForget={onForget} t={t} />
+          <DeviceRow
+            key={device.peerId}
+            device={device}
+            busy={busy.includes(deviceKey(device.peerId))}
+            onForget={onForget}
+            t={t}
+          />
         ))}
     </div>
   )

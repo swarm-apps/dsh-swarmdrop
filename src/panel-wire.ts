@@ -102,6 +102,28 @@ export interface PanelDevice {
   readonly online: boolean | null
 }
 
+/**
+ * One inbox entry, as the panel shows it.
+ *
+ * The panel carries a **few** of these, not the inbox: the whole list belongs to
+ * the settings page, which has room for it. What the panel answers is "did
+ * something arrive", and for that the newest few are the entire answer.
+ */
+export interface PanelInboxEntry {
+  readonly itemId: string
+  /** `files` or `text`. */
+  readonly contentKind: string
+  /** Device it came from — what the user will recognise. */
+  readonly sourceName: string
+  readonly itemCount: number
+  readonly totalSize: number
+  /** Unix seconds. */
+  readonly receivedAt: number
+}
+
+/** How many inbox entries the panel carries. See {@link PanelInboxEntry}. */
+export const PANEL_INBOX_LIMIT = 5
+
 /** {@link ENDPOINT_STATE} request. */
 export interface StateRequest {
   /**
@@ -163,11 +185,30 @@ export interface PairingSnapshot {
 
 /** {@link ENDPOINT_STATE} answer. */
 export interface StateAnswer {
+  /**
+   * Non-null when the machine subscription is down, in which case everything
+   * else in this answer is the last thing it said rather than what is true now.
+   *
+   * Carried rather than left implicit because the two are indistinguishable
+   * from the browser: a mirror that stopped updating answers exactly like a
+   * machine where nothing is happening. The panel draws it as a band above the
+   * facts it qualifies.
+   */
+  readonly subscription: string | null
   /** Whether a SwarmDrop node is running on the machine dsh runs on. */
   readonly nodeRunning: boolean
   readonly devices: readonly PanelDevice[]
   /** How many items the inbox holds, as far as the subscription has seen. */
   readonly inboxCount: number
+  /**
+   * The newest few, so the panel can expand the count in place.
+   *
+   * Carried on an answer that was being sent anyway rather than fetched: the
+   * Host already holds them in the machine mirror, so this costs bytes rather
+   * than a process. Expanding the row must not be the thing that spawns one —
+   * that is exactly the polling the settings page is forbidden from doing.
+   */
+  readonly inboxRecent: readonly PanelInboxEntry[]
   /** The pairing desk. Rides the same answer because it shares the same clock. */
   readonly pairing: PairingSnapshot
   /** Feed straight back as the next request's `since`. */

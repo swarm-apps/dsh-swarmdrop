@@ -28,6 +28,27 @@
  * installed, no node running, an action refused. The panel draws them. Throwing
  * would leave the sidebar showing whatever it had last, which is the one thing
  * a status indicator must never do.
+ *
+ * ## Two rules that keep the panel from dying quietly
+ *
+ * A status surface whose controls stop responding, with nothing on screen
+ * saying why, is worse than no panel: the user cannot tell a wedged panel from
+ * a wedged node. Two rules make that state unreachable rather than unlikely.
+ *
+ * 1. **Every call has a deadline.** `fetch` has no timeout of its own, and a
+ *    request can go unanswered for reasons no code here will ever see — the
+ *    machine slept with one in flight, a proxy swallowed the socket, the
+ *    connection pool is held by something else. Without a deadline the
+ *    `finally` that clears {@link PanelState.busy} never runs and the control
+ *    is disabled *for the life of the page*. The deadlines below all sit
+ *    **above** the matching Host-side bound, so under normal operation the Host
+ *    always answers first: this is a watchdog on the transport, not a policy on
+ *    how long an action may take.
+ * 2. **Busy is per control.** It used to be one flag for the whole panel, so
+ *    a single unsettled call disabled node start/stop, unpair *and* pairing at
+ *    once — one hung request took the panel hostage. Keying it means a slow
+ *    unpair leaves the node controls usable, and a wedged one costs exactly the
+ *    control it belongs to.
  */
 
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
@@ -38,7 +59,8 @@ import {
   ENDPOINT_DEVICE_FORGET, ENDPOINT_NETWORK, ENDPOINT_NODE_START, ENDPOINT_NODE_STOP,
   ENDPOINT_PAIR_BEGIN, ENDPOINT_PAIR_CANCEL, ENDPOINT_PAIR_RESPOND, ENDPOINT_STATE, PANEL_CHANNEL,
   IDLE_PAIRING,
-  type ActionAnswer, type NetworkAnswer, type PairingSnapshot, type PanelDevice, type StateAnswer,
+  type ActionAnswer, type NetworkAnswer, type PairingSnapshot, type PanelDevice,
+  type PanelInboxEntry, type StateAnswer,
 } from '../panel-wire.js'
 
 /** How often the open panel re-asks for network posture. */
@@ -47,8 +69,41 @@ const NETWORK_INTERVAL_MS = 3_000
 /** How long to wait before retrying a state poll that failed outright. */
 const RETRY_DELAY_MS = 2_000
 
-/** Which long-running action is in flight, if any. */
-export type PanelBusy = 'node.start' | 'node.stop' | 'device.forget' | 'pair' | null
+/**
+ * Deadline for the state long poll.
+ *
+ * Above the Host's own `POLL_CEILING_MS` (25 s), which answers unchanged rather
+ * than parking forever — so this only ever fires when the answer did not come
+ * back at all, and the loop's own retry is the recovery.
+ */
+const STATE_DEADLINE_MS = 35_000
+
+/** Deadline for a network read. `swarmdrop status` answers in milliseconds. */
+const NETWORK_DEADLINE_MS = 15_000
+
+/**
+ * Deadline for an action.
+ *
+ * The slowest of them by a wide margin is `node.start`, which the CLI itself
+ * bounds at 20 s of readiness polling plus a 3 s update hint. 45 s clears that
+ * with room to spare while still returning a wedged control to the user inside
+ * a minute.
+ */
+const ACTION_DEADLINE_MS = 45_000
+
+/**
+ * Which control a call belongs to.
+ *
+ * Unpair is keyed by device rather than by verb: two rows are two controls, and
+ * a slow one has no business greying out its neighbour. Start and stop share
+ * `node` because they are the same button.
+ */
+export type BusyKey = 'node' | 'pair' | `device:${string}`
+
+/** The unpair key for one device. */
+export function deviceKey(peerId: string): BusyKey {
+  return `device:${peerId}`
+}
 
 /** Everything the panel draws. */
 export interface PanelState {
@@ -62,11 +117,23 @@ export interface PanelState {
   readonly nodeRunning: boolean
   readonly devices: readonly PanelDevice[]
   readonly inboxCount: number
+  /** The newest few entries, so the count can be expanded without a fetch. */
+  readonly inboxRecent: readonly PanelInboxEntry[]
   /** `null` until the panel has been opened once — see the module note. */
   readonly network: NetworkAnswer | null
   /** The pairing desk: whether a window is open and who is at it. */
   readonly pairing: PairingSnapshot
-  readonly busy: PanelBusy
+  /**
+   * Non-null when the Host's machine subscription is down.
+   *
+   * Everything above it is then the last thing that subscription said. Kept
+   * apart from {@link PanelState.error} because they describe different halves
+   * of the path: `error` means the browser cannot reach the Host, this means
+   * the Host cannot see the machine.
+   */
+  readonly subscription: string | null
+  /** Which controls have a call in flight. Empty when the panel is idle. */
+  readonly busy: readonly BusyKey[]
   /**
    * The channel itself is not working — no binary, Host unreachable, a 500.
    *
@@ -91,9 +158,11 @@ const INITIAL: PanelState = {
   nodeRunning: false,
   devices: [],
   inboxCount: 0,
+  inboxRecent: [],
   network: null,
   pairing: IDLE_PAIRING,
-  busy: null,
+  subscription: null,
+  busy: [],
   error: null,
   actionError: null,
 }
@@ -165,6 +234,22 @@ function sameDevices(a: readonly PanelDevice[], b: readonly PanelDevice[]): bool
   })
 }
 
+/**
+ * Whether two inbox previews say the same thing.
+ *
+ * Needed for the same reason as {@link sameDevices}: the list arrives freshly
+ * parsed on every answer, so a reference check is always "changed" — and the
+ * Host answers on the 25 s poll ceiling even when nothing moved.
+ */
+function sameInbox(a: readonly PanelInboxEntry[], b: readonly PanelInboxEntry[]): boolean {
+  return a.length === b.length && a.every((entry, index) => entry.itemId === b[index]?.itemId)
+}
+
+/** Whether two busy sets say the same thing. */
+function sameBusy(a: readonly BusyKey[], b: readonly BusyKey[]): boolean {
+  return a.length === b.length && a.every((key, index) => key === b[index])
+}
+
 /** Whether two pairing snapshots say the same thing. */
 function samePairing(a: PairingSnapshot, b: PairingSnapshot): boolean {
   return a.phase === b.phase
@@ -175,8 +260,17 @@ function samePairing(a: PairingSnapshot, b: PairingSnapshot): boolean {
     && a.request?.pendingId === b.request?.pendingId
 }
 
-/** The one error message a failure produces, whatever kind of failure it was. */
+/**
+ * The one error message a failure produces, whatever kind of failure it was.
+ *
+ * A deadline is named rather than relayed: `AbortSignal.timeout` raises a
+ * DOMException reading "signal timed out", which tells the user nothing about
+ * what timed out or that the Host may still be working on it.
+ */
 function reasonOf(error: unknown): string {
+  if (error instanceof DOMException && error.name === 'TimeoutError') {
+    return 'SwarmDrop 没有回应，请再试一次'
+  }
   return error instanceof Error ? error.message : String(error)
 }
 
@@ -202,6 +296,8 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
       if (key === 'network') return !sameNetwork(current.network, merged.network)
       if (key === 'pairing') return !samePairing(current.pairing, merged.pairing)
       if (key === 'devices') return !sameDevices(current.devices, merged.devices)
+      if (key === 'inboxRecent') return !sameInbox(current.inboxRecent, merged.inboxRecent)
+      if (key === 'busy') return !sameBusy(current.busy, merged.busy)
       return current[key] !== merged[key]
     })
     if (!changed) return
@@ -209,15 +305,21 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
   }
 
   /**
-   * One call, with the transport's two failure shapes folded into one.
+   * One call, with the transport's two failure shapes folded into one, under a
+   * deadline.
    *
    * `rpc.call` reports a refusal in its result and a transport fault by
    * throwing. A caller that had to handle both separately would write the same
    * three lines at every call site, and the panel treats them identically
    * anyway: something did not work, and here is what it said.
+   *
+   * The deadline is merged into the port's lifetime rather than raced beside
+   * it: to the awaiting caller, "the page went away" and "nothing came back"
+   * are one event — the call is over and nothing is coming.
    */
-  async function ask<T>(endpoint: string, payload: unknown): Promise<T> {
-    const answer = await connection.rpc.call(PANEL_CHANNEL, endpoint, payload, life.signal)
+  async function ask<T>(endpoint: string, payload: unknown, deadlineMs: number): Promise<T> {
+    const signal = AbortSignal.any([life.signal, AbortSignal.timeout(deadlineMs)])
+    const answer = await connection.rpc.call(PANEL_CHANNEL, endpoint, payload, signal)
     if (!answer.ok) throw new Error(`${answer.error.code}: ${answer.error.message}`)
     return answer.value as T
   }
@@ -233,7 +335,7 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
     let since = 0
     while (!life.signal.aborted) {
       try {
-        const answer = await ask<StateAnswer>(ENDPOINT_STATE, { since })
+        const answer = await ask<StateAnswer>(ENDPOINT_STATE, { since }, STATE_DEADLINE_MS)
         since = answer.version
         const wasRunning = store.getSnapshot().nodeRunning
         patch({
@@ -241,9 +343,14 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
           nodeRunning: answer.nodeRunning,
           devices: answer.devices,
           inboxCount: answer.inboxCount,
+          // A Host older than this bundle would not send it; an empty preview
+          // just leaves the row un-expandable rather than throwing.
+          inboxRecent: answer.inboxRecent ?? [],
           // A Host older than this bundle would not send it. Defaulting keeps
           // the panel drawing rather than throwing on a missing field.
           pairing: answer.pairing ?? IDLE_PAIRING,
+          // Same reason as `pairing` above: an older Host does not send it.
+          subscription: answer.subscription ?? null,
           // A successful round means the channel is healthy; a stale transport
           // error would otherwise sit on screen until the next failure.
           error: null,
@@ -261,7 +368,7 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
 
   async function readNetwork(): Promise<void> {
     try {
-      patch({ network: await ask<NetworkAnswer>(ENDPOINT_NETWORK, {}) })
+      patch({ network: await ask<NetworkAnswer>(ENDPOINT_NETWORK, {}, NETWORK_DEADLINE_MS) })
     } catch (error) {
       if (life.signal.aborted) return
       // Network detail failing does not invalidate what the state loop knows,
@@ -301,14 +408,15 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
    * transport failure. Both still end up in `error` here — the difference
    * matters to the wire, not to the person reading the panel.
    */
-  async function act(
-    busy: Exclude<PanelBusy, null>,
-    endpoint: string,
-    payload: unknown,
-  ): Promise<void> {
-    patch({ busy, actionError: null })
+  async function act(key: BusyKey, endpoint: string, payload: unknown): Promise<void> {
+    // Guarded rather than merely disabled in the UI: the button is one way in,
+    // and a second click that raced the first render would otherwise leave two
+    // calls sharing one key — the first to finish would clear it while the
+    // other was still running.
+    if (store.getSnapshot().busy.includes(key)) return
+    patch({ busy: [...store.getSnapshot().busy, key], actionError: null })
     try {
-      const answer = await ask<ActionAnswer>(endpoint, payload)
+      const answer = await ask<ActionAnswer>(endpoint, payload, ACTION_DEADLINE_MS)
       if (!answer.ok) {
         patch({ actionError: answer.message ?? 'the action was refused' })
         return
@@ -319,7 +427,9 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
     } catch (error) {
       patch({ actionError: reasonOf(error) })
     } finally {
-      patch({ busy: null })
+      // Read the *current* set rather than restoring a captured one: another
+      // control may have started or finished while this call was in flight.
+      patch({ busy: store.getSnapshot().busy.filter(held => held !== key) })
     }
   }
 
@@ -332,9 +442,9 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
       if (open) void readNetwork()
       syncNetworkTimer()
     },
-    startNode: () => act('node.start', ENDPOINT_NODE_START, {}),
-    stopNode: () => act('node.stop', ENDPOINT_NODE_STOP, {}),
-    forget: (peerId: string) => act('device.forget', ENDPOINT_DEVICE_FORGET, { peerId }),
+    startNode: () => act('node', ENDPOINT_NODE_START, {}),
+    stopNode: () => act('node', ENDPOINT_NODE_STOP, {}),
+    forget: (peerId: string) => act(deviceKey(peerId), ENDPOINT_DEVICE_FORGET, { peerId }),
     // The pairing verbs return the moment the Host has noted them; what
     // actually happened arrives through the state loop, which is already parked.
     beginPair: () => act('pair', ENDPOINT_PAIR_BEGIN, {}),

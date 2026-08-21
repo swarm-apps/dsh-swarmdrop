@@ -34,11 +34,14 @@ import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api'
 
 import { call, SwarmDropError } from './cli.js'
 import { count, flag, list, optional, text } from './coerce.js'
+import { CONSOLE_ROUTES } from './console.js'
 import type { MachineState } from './machine.js'
 import type { PairingSession } from './pairing.js'
+import type { WatchSubscription } from './subscription.js'
 import {
   ENDPOINT_DEVICE_FORGET, ENDPOINT_NETWORK, ENDPOINT_NODE_START, ENDPOINT_NODE_STOP,
   ENDPOINT_PAIR_BEGIN, ENDPOINT_PAIR_CANCEL, ENDPOINT_PAIR_RESPOND, ENDPOINT_STATE, PANEL_CHANNEL,
+  PANEL_INBOX_LIMIT,
   type ActionAnswer, type ForgetRequest, type NetworkAnswer, type PairRespondRequest,
   type PanelEndpoint, type StateAnswer, type StateRequest,
 } from './panel-wire.js'
@@ -90,7 +93,9 @@ async function attempt(args: readonly string[]): Promise<ActionAnswer> {
 export interface PanelSources {
   readonly machine: MachineState
   readonly pairing: PairingSession
-  /** The shared change counter both of the above bump. */
+  /** Whether the mirror the machine state holds is still being fed. */
+  readonly subscription: WatchSubscription
+  /** The shared change counter all of the above bump. */
   readonly revision: Revision
 }
 
@@ -157,7 +162,14 @@ interface RouteArgs extends PanelSources {
 
 type Route = (args: RouteArgs) => Promise<unknown>
 
-const ROUTES: Record<string, Route | undefined> = {
+/**
+ * The panel's own routes.
+ *
+ * `satisfies` is what makes adding a constant to `panel-wire.ts` without
+ * handling it here a compile error, rather than an "unknown swarmdrop endpoint"
+ * at runtime in a deployment nobody is watching.
+ */
+const PANEL_ROUTES = {
   [ENDPOINT_STATE]: state,
   [ENDPOINT_NETWORK]: network,
   [ENDPOINT_NODE_START]: () => attempt(['start', '-d']),
@@ -178,12 +190,27 @@ const ROUTES: Record<string, Route | undefined> = {
 } satisfies Record<PanelEndpoint, Route>
 
 /**
+ * Everything this channel serves.
+ *
+ * The console's two routes ride here rather than on a channel of their own: a
+ * second channel would be a second registration, a second authority decision
+ * and a second teardown path, for two more routes reaching the same binary on
+ * the same machine. A channel is a transport seat, not a namespace.
+ */
+const ROUTES: Record<string, Route | undefined> = {
+  ...PANEL_ROUTES,
+  ...CONSOLE_ROUTES,
+}
+
+/**
  * Long-poll everything the panel watches. Costs nothing while nothing changes.
  *
  * The two sources share one counter, so "wait for anything" is a single park
  * rather than a race — see `revision.ts` for why that is the right shape here.
  */
-async function state({ machine, pairing, revision, payload, signal }: RouteArgs): Promise<StateAnswer> {
+async function state(
+  { machine, pairing, subscription, revision, payload, signal }: RouteArgs,
+): Promise<StateAnswer> {
   const since = count((payload as StateRequest | null)?.since)
 
   // The ceiling and the caller's own cancellation are the same kind of event to
@@ -200,9 +227,14 @@ async function state({ machine, pairing, revision, payload, signal }: RouteArgs)
   // which one, and the answer carries both anyway.
   const snapshot = machine.snapshot()
   return {
+    subscription: subscription.health(),
     nodeRunning: snapshot.nodeRunning,
     devices: snapshot.devices,
     inboxCount: snapshot.inbox.length,
+    // Sliced here rather than in the browser: the mirror holds a session
+    // baseline's worth, and shipping all of it on every state answer would
+    // grow the parked response for content the panel has no room to draw.
+    inboxRecent: snapshot.inbox.slice(0, PANEL_INBOX_LIMIT),
     pairing: pairing.snapshot(),
     version: revision.current(),
   }

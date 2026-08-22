@@ -39,6 +39,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { InputTriggerService } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 
 import { SwarmDropConsole, type SwarmDropConsoleFace } from './console.js'
+import { createLiveTransfers } from './live-transfers.js'
 import { createConsolePort } from './console-port.js'
 import { createInboxSource } from './inbox-source.js'
 import { en, NS, zh } from './locales.js'
@@ -55,8 +56,22 @@ export function apply(ctx: ClientContext): void {
   ctx.conversationEvents.register(transferDefinition)
   ctx.conversationEvents.register(receivedDefinition)
 
+  // The transfer row wants two things the session log cannot give it — how far
+  // a running transfer has got, and a way to pause it — but the row itself is
+  // registered unconditionally, because everything else it draws comes from the
+  // log. This holder bridges that: a stable face now, a live channel later if
+  // one appears. See `live-transfers.ts`.
+  const live = createLiveTransfers()
+
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register(
-    { name: 'conversation.chat.node', key: 'swarmdrop-transfer' },
+    {
+      name: 'conversation.chat.node',
+      key: 'swarmdrop-transfer',
+      // The factory takes the session id (this slot is session-scoped) and
+      // ignores it: transfers belong to the machine, not to a conversation, and
+      // the row is identified by transfer id.
+      inject: () => live.face,
+    },
     TransferRow,
   ))
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register(
@@ -86,6 +101,10 @@ export function apply(ctx: ClientContext): void {
 
     const port = createPanelPort(panelCtx)
     panelCtx.effect(() => () => { port.dispose() }, 'swarmdrop: panel port')
+    // Now the conversation rows can show live progress and offer controls. The
+    // detach runs with this fiber, so a deployment that tears the channel down
+    // leaves the rows rendering from the log rather than from a dead port.
+    panelCtx.effect(() => live.attach(port), 'swarmdrop: live transfers')
 
     // The settings page shares this port for the live half — node liveness and
     // the device table are already arriving on the panel's subscription, and

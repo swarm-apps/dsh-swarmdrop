@@ -144,12 +144,40 @@ mysteriously, and the panel offers to start one.
 | `swarmdrop_send_files` | Send files or directories to one of your devices. |
 | `swarmdrop_send_text` | Send a short message to a device's inbox. |
 | `swarmdrop_list_devices` | Your paired devices and whether they are online. |
-| `swarmdrop_list_inbox` | What your devices have sent this machine. |
-| `swarmdrop_inbox_files` | Local paths of one inbox entry's files. |
+| `swarmdrop_node_status` | Whether the local node is running, and how it is reachable. |
+| `swarmdrop_list_inbox` | What your devices have sent this machine, and where it landed. |
+| `swarmdrop_search_inbox` | Find an entry by keyword — title, sender, message body, file names. |
+| `swarmdrop_inbox_item` | One entry in full: every file's real path, or the message body. |
+| `swarmdrop_inbox_files` | Just the files of one entry, when that is all you need. |
+| `swarmdrop_list_transfers` | Transfer sessions, in flight and recent. |
+| `swarmdrop_transfer_status` | One transfer: phase, progress, rate. |
+| `swarmdrop_pause_transfer` | Pause a transfer that is moving bytes. |
+| `swarmdrop_resume_transfer` | Resume from a checkpoint. |
+| `swarmdrop_cancel_transfer` | Stop one for good, telling the other end. |
 
-`presence` is three-valued (`online` / `offline` / `unknown`). `unknown` means no
-SwarmDrop node is running to probe with — it is not the same as offline, and the
-distinction is the difference between "your phone is asleep" and "start SwarmDrop".
+**Nothing here can pair a device.** Accepting an inbound request is your decision
+at the panel — a tool that could pair would be a tool that could hand a stranger
+a channel into this machine.
+
+Two values are three-valued rather than boolean, and both distinctions matter:
+
+- `presence` is `online` / `offline` / `unknown`. `unknown` means no SwarmDrop
+  node is running to probe with — the difference between "your phone is asleep"
+  and "start SwarmDrop".
+- a transfer's `speed` is a number or `null`, **never `0`**. The core reports
+  zero for "no new bytes within a sliding window", which is what saving a
+  finished file looks like; passing that on as a measured zero would have an
+  agent telling you a healthy transfer had stalled.
+
+`swarmdrop_search_inbox` needs `swarmdrop` 0.7.0; an older one says so in a
+sentence rather than failing as though you mistyped something.
+
+Every call names what it is doing on its card — `Send 3 files to 光印-华为410`
+rather than `swarmdrop_send_files` over a dump of arguments. Live progress and
+the pause / cancel controls are **not** on the card: dsh's tool cards are a
+closed vocabulary of static shapes, and their presenters are pure functions
+replayed months later, so a card cannot honestly say "right now". Those live in
+the conversation row and the panel, both of which can.
 
 ## How it is put together
 
@@ -165,7 +193,15 @@ src/
   console.ts     the settings page's two routes: read a section, run an action
   console-wire.ts  the page's wire contract, compiled by both halves
   projection.ts  the inbox roll, as a Session projection (what `@` reads)
-  tools.ts       what the model can call
+  tools/         what the model can call
+    index.ts       the registry: every tool, registered once
+    shape.ts       CLI output  →  this plugin's contract
+    explain.ts     CLI failure →  the model's next move
+    send.ts        the two that write to the conversation
+    inbox.ts       what came in, and where it is
+    transfer.ts    watching one, and steering one
+    device.ts      who is reachable, and is this node up
+    present.ts     what a call's card says while it runs, and after
   command.ts     what you can type
   types.ts       the Session event family this plugin owns
   client/        the browser half: the panel, conversation rows, the `@` source

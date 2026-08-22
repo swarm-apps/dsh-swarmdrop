@@ -38,6 +38,7 @@ import type { HostObservable, InjectFace, PropsLocale, PropsRuntime } from '@dee
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 
 import { SwarmDropMark } from './brand.js'
+import { formatDuration, formatSize } from './format.js'
 import type { PairingRequestView, PanelDevice } from '../panel-wire.js'
 import { deviceKey, type PanelState } from './panel-port.js'
 import type { SwarmDropKey } from './locales.js'
@@ -160,6 +161,22 @@ const staleStyle: CSSProperties = {
 
 /** A one-line aside under something, in the muted voice. */
 const hintStyle: CSSProperties = { ...mutedStyle, fontSize: 11, marginTop: 6 }
+
+/** The groove a transfer's progress bar sits in. */
+const trackStyle: CSSProperties = {
+  height: 3,
+  marginTop: 6,
+  borderRadius: 2,
+  background: 'var(--dsw-alias-fill-tertiary)',
+  overflow: 'hidden',
+}
+
+/** The filled part. Width is the only thing that changes, so it animates cleanly. */
+const fillStyle: CSSProperties = {
+  height: '100%',
+  background: 'var(--dsw-alias-fill-brand)',
+  transition: 'width 200ms linear',
+}
 
 const monoStyle: CSSProperties = {
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -308,6 +325,10 @@ export function SwarmDropPanel({
           <DeviceSection devices={state.devices} busy={state.busy} onForget={onForget} t={t} />
           {!pairingIsLive && pairingSection}
 
+          {/* Above the inbox: what is happening now outranks what already
+              arrived, and this section disappears entirely when nothing is in
+              flight — so it costs the quiet panel no height at all. */}
+          <TransferSection transfers={state.transfers} t={t} />
           <InboxSection
             count={state.inboxCount}
             recent={state.inboxRecent}
@@ -370,6 +391,97 @@ function InboxSection({ count, recent, t }: {
       {open && count > recent.length && (
         <div style={{ ...hintStyle, marginTop: 4 }}>{t('inboxMore')}</div>
       )}
+    </div>
+  )
+}
+
+/**
+ * What is moving right now.
+ *
+ * **Renders nothing when nothing is in flight.** A permanently visible "0
+ * transfers" row would cost height on every panel opening to answer a question
+ * nobody asked; the section appearing *is* the news.
+ *
+ * The numbers come off the state answer, which the Host folds from the
+ * subscription — the panel never asks the CLI for progress. That is not only a
+ * cost decision: deriving a rate from polled snapshots is what made SwarmDrop's
+ * own terminal panel report ten times the real speed, and this section would
+ * have inherited it.
+ */
+function TransferSection({ transfers, t }: {
+  transfers: PanelState['transfers']
+  t: Translate
+}) {
+  if (transfers.length === 0) return null
+
+  return (
+    <div style={sectionStyle}>
+      <div style={rowStyle}>
+        <span style={mutedStyle}>{t('inFlight')}</span>
+        <span style={mutedStyle}>{transfers.length}</span>
+      </div>
+      {transfers.map(transfer => (
+        <TransferRow key={transfer.sessionId} transfer={transfer} t={t} />
+      ))}
+    </div>
+  )
+}
+
+/** The phases a transfer can sit in without bytes moving, and what to call them. */
+const IDLE_PHASE_KEYS: Readonly<Record<string, SwarmDropKey>> = {
+  offered: 'transferPhaseOffered',
+  waitingAccept: 'transferPhaseWaitingAccept',
+  waiting_accept: 'transferPhaseWaitingAccept',
+  suspended: 'transferPhaseSuspended',
+}
+
+/**
+ * One transfer.
+ *
+ * The second line answers a different question depending on the phase, and that
+ * is deliberate: while bytes move, "how fast, how much longer" is the only
+ * thing worth the space; while they do not, the *reason* is. Showing a rate for
+ * a paused transfer would be reporting a machine state that no longer exists —
+ * the same rule the CLI's own panel follows.
+ */
+function TransferRow({ transfer, t }: {
+  transfer: PanelState['transfers'][number]
+  t: Translate
+}) {
+  const { totalBytes, transferredBytes, speed, eta, phase } = transfer
+  const percent = totalBytes > 0
+    ? Math.min(100, Math.floor((transferredBytes / totalBytes) * 100))
+    : 0
+  const idleKey = IDLE_PHASE_KEYS[phase]
+  const name = transfer.peerName === '' ? t('unnamedDevice') : transfer.peerName
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={rowStyle}>
+        <span>
+          {t(transfer.direction === 'send' ? 'transferSending' : 'transferReceiving')}
+          {' '}
+          {name}
+        </span>
+        <span style={mutedStyle}>{String(percent)}%</span>
+      </div>
+      {/* A bar rather than a number alone: a percentage that moves is hard to
+          read at a glance, and this is a glance surface. */}
+      <div style={trackStyle}>
+        <div style={{ ...fillStyle, width: `${String(percent)}%` }} />
+      </div>
+      <div style={{ ...hintStyle, marginTop: 4 }}>
+        {idleKey === undefined
+          ? (
+            <>
+              {formatSize(transferredBytes)} / {formatSize(totalBytes)}
+              {' · '}
+              {speed === null ? t('transferUnknownRate') : `${formatSize(speed)}/s`}
+              {eta !== null && <>{' · '}{t('transferEta', { eta: formatDuration(eta) })}</>}
+            </>
+          )
+          : t(idleKey)}
+      </div>
     </div>
   )
 }

@@ -75,6 +75,18 @@ export const zh = {
   inboxCount: '{count} 项',
   inboxMore: '更多在设置 → SwarmDrop 里',
 
+  inFlight: '正在传输',
+  transferSending: '发往',
+  transferReceiving: '来自',
+  // 速率与剩余时间说不出来时的占位符。**不写「0 B/s」**：核心把速率归零表达的是
+  // 「一个窗口内没有新字节」（对端在确认、接收方正在保存收齐的文件），说成 0 是在
+  // 报告一个没发生的停滞。
+  transferUnknownRate: '—',
+  transferEta: '剩余 {eta}',
+  transferPhaseOffered: '等待对方确认',
+  transferPhaseWaitingAccept: '等待对方确认',
+  transferPhaseSuspended: '已暂停',
+
   stale: '与 SwarmDrop 的订阅断了，正在重连；下面的信息可能是旧的。',
 
   // ── 设置页 ──
@@ -211,6 +223,15 @@ export const en = {
   inbox: 'Inbox',
   inboxCount: '{count}',
   inboxMore: 'More in Settings → SwarmDrop',
+
+  inFlight: 'In flight',
+  transferSending: 'To',
+  transferReceiving: 'From',
+  transferUnknownRate: '—',
+  transferEta: '{eta} left',
+  transferPhaseOffered: 'Waiting for the other end',
+  transferPhaseWaitingAccept: 'Waiting for the other end',
+  transferPhaseSuspended: 'Paused',
 
   stale: 'Lost the SwarmDrop subscription and is reconnecting; what follows may be out of date.',
 

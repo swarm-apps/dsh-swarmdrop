@@ -55,12 +55,15 @@ import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client
 import type { ClientContext, ObservableSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 
+import { deviceKey, transferKey, type BusyKey } from './busy.js'
+
 import {
   ENDPOINT_DEVICE_FORGET, ENDPOINT_NETWORK, ENDPOINT_NODE_START, ENDPOINT_NODE_STOP,
-  ENDPOINT_PAIR_BEGIN, ENDPOINT_PAIR_CANCEL, ENDPOINT_PAIR_RESPOND, ENDPOINT_STATE, PANEL_CHANNEL,
+  ENDPOINT_PAIR_BEGIN, ENDPOINT_PAIR_CANCEL, ENDPOINT_PAIR_RESPOND, ENDPOINT_STATE,
+  ENDPOINT_TRANSFER_CONTROL, PANEL_CHANNEL,
   IDLE_PAIRING,
   type ActionAnswer, type NetworkAnswer, type PairingSnapshot, type PanelDevice,
-  type PanelInboxEntry, type StateAnswer,
+  type PanelInboxEntry, type PanelTransfer, type StateAnswer, type TransferControlAction,
 } from '../panel-wire.js'
 
 /** How often the open panel re-asks for network posture. */
@@ -98,12 +101,9 @@ const ACTION_DEADLINE_MS = 45_000
  * a slow one has no business greying out its neighbour. Start and stop share
  * `node` because they are the same button.
  */
-export type BusyKey = 'node' | 'pair' | `device:${string}`
-
-/** The unpair key for one device. */
-export function deviceKey(peerId: string): BusyKey {
-  return `device:${peerId}`
-}
+// Re-exported so the panel keeps importing its currency from one place, while
+// the rule itself lives in a module a test can read without a DOM (`busy.ts`).
+export { deviceKey, transferKey, type BusyKey } from './busy.js'
 
 /** Everything the panel draws. */
 export interface PanelState {
@@ -119,6 +119,8 @@ export interface PanelState {
   readonly inboxCount: number
   /** The newest few entries, so the count can be expanded without a fetch. */
   readonly inboxRecent: readonly PanelInboxEntry[]
+  /** Transfers that have not finished, most recently touched first. */
+  readonly transfers: readonly PanelTransfer[]
   /** `null` until the panel has been opened once — see the module note. */
   readonly network: NetworkAnswer | null
   /** The pairing desk: whether a window is open and who is at it. */
@@ -159,6 +161,7 @@ const INITIAL: PanelState = {
   devices: [],
   inboxCount: 0,
   inboxRecent: [],
+  transfers: [],
   network: null,
   pairing: IDLE_PAIRING,
   subscription: null,
@@ -182,6 +185,8 @@ export interface PanelPort {
   cancelPair(): Promise<void>
   /** Answer the request the user is looking at. */
   respondPair(pendingId: number, accept: boolean): Promise<void>
+  /** Pause, resume or cancel one transfer. */
+  controlTransfer(transferId: string, action: TransferControlAction): Promise<void>
   dispose(): void
 }
 
@@ -245,6 +250,28 @@ function sameInbox(a: readonly PanelInboxEntry[], b: readonly PanelInboxEntry[])
   return a.length === b.length && a.every((entry, index) => entry.itemId === b[index]?.itemId)
 }
 
+/**
+ * Whether two transfer lists say the same thing.
+ *
+ * ⚠️ **Unlike {@link sameInbox}, this compares the moving parts.** An inbox entry
+ * never changes once it exists, so identity is the whole answer there; a
+ * transfer changes several times a second, and comparing only `sessionId` would
+ * mean the panel renders the first frame of a transfer and then sits frozen at
+ * 3% while the bytes fly by.
+ */
+function sameTransfers(a: readonly PanelTransfer[], b: readonly PanelTransfer[]): boolean {
+  return a.length === b.length && a.every((transfer, index) => {
+    const other = b[index]
+    return other !== undefined
+      && transfer.sessionId === other.sessionId
+      && transfer.phase === other.phase
+      && transfer.transferredBytes === other.transferredBytes
+      && transfer.totalBytes === other.totalBytes
+      && transfer.speed === other.speed
+      && transfer.eta === other.eta
+  })
+}
+
 /** Whether two busy sets say the same thing. */
 function sameBusy(a: readonly BusyKey[], b: readonly BusyKey[]): boolean {
   return a.length === b.length && a.every((key, index) => key === b[index])
@@ -297,6 +324,7 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
       if (key === 'pairing') return !samePairing(current.pairing, merged.pairing)
       if (key === 'devices') return !sameDevices(current.devices, merged.devices)
       if (key === 'inboxRecent') return !sameInbox(current.inboxRecent, merged.inboxRecent)
+      if (key === 'transfers') return !sameTransfers(current.transfers, merged.transfers)
       if (key === 'busy') return !sameBusy(current.busy, merged.busy)
       return current[key] !== merged[key]
     })
@@ -346,6 +374,9 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
           // A Host older than this bundle would not send it; an empty preview
           // just leaves the row un-expandable rather than throwing.
           inboxRecent: answer.inboxRecent ?? [],
+          // Same reason: a Host older than this bundle sends no transfers, and
+          // an empty list simply draws no section.
+          transfers: answer.transfers ?? [],
           // A Host older than this bundle would not send it. Defaulting keeps
           // the panel drawing rather than throwing on a missing field.
           pairing: answer.pairing ?? IDLE_PAIRING,
@@ -451,6 +482,10 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
     cancelPair: () => act('pair', ENDPOINT_PAIR_CANCEL, {}),
     respondPair: (pendingId: number, accept: boolean) =>
       act('pair', ENDPOINT_PAIR_RESPOND, { pendingId, accept }),
+    // The outcome arrives through the state loop like every other verb: the
+    // phase change is what the row is waiting for, and it is already parked.
+    controlTransfer: (transferId: string, action: TransferControlAction) =>
+      act(transferKey(transferId), ENDPOINT_TRANSFER_CONTROL, { transferId, action }),
     dispose(): void {
       panelOpen = false
       syncNetworkTimer()

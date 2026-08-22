@@ -167,6 +167,25 @@ export class SwarmDropError extends Error {
 }
 
 /**
+ * Whether this failure is "that CLI has never heard of this command".
+ *
+ * clap answers an unknown subcommand or flag with a **usage error** (exit 2)
+ * whose text is about argument parsing. Relayed as-is it reads as though the
+ * user mistyped something, and the user typed nothing at all — they clicked a
+ * button in a settings page.
+ *
+ * Matching on clap's wording is admittedly a string test, but the alternative
+ * (probe `--version` before every call) spawns a second process per action to
+ * pre-empt a case that is rare and self-describing. The fallback is safe: an
+ * unmatched message is relayed unchanged.
+ */
+export function isUnknownToCli(error: SwarmDropError): boolean {
+  if (error.exitCode !== 2) return false
+  return /unrecognized subcommand|unexpected argument|invalid value|unknown argument/i
+    .test(error.message)
+}
+
+/**
  * Run one `swarmdrop` subcommand and parse its structured result.
  *
  * ⚠️ **stdout only.** The CLI keeps diagnostics on stderr precisely so this

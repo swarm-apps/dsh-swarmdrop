@@ -16,7 +16,7 @@
  * bridge.ts      machine-wide happenings  →  per-session events
  * panel.ts       the browser panel's RPC channel (status, devices, pairing)
  * panel-wire.ts  the panel's wire contract, compiled by both halves
- * tools.ts       what the model can call
+ * tools/         what the model can call (send · inbox · transfer · device)
  * command.ts     what the person can type
  * types.ts       the Session event family this plugin owns
  * client/        the browser half (panel, conversation nodes, `@` source)
@@ -54,7 +54,7 @@ import { registerPanel } from './panel.js'
 import { inboxProjectionDefinition } from './projection.js'
 import { Revision } from './revision.js'
 import { WatchSubscription } from './subscription.js'
-import { registerTools } from './tools.js'
+import { registerTools } from './tools/index.js'
 import { announceEventTypes } from './types.js'
 
 export const name = 'swarmdrop'

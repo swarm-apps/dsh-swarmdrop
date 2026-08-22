@@ -8,7 +8,42 @@ nothing written down does not get published.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-08-22
+
+### Added
+
+- Eight tools, bringing the agent surface level with SwarmDrop's own MCP server:
+  `swarmdrop_node_status`, `swarmdrop_search_inbox`, `swarmdrop_inbox_item`,
+  `swarmdrop_list_transfers`, `swarmdrop_transfer_status`, and
+  `swarmdrop_pause_transfer` / `_resume_transfer` / `_cancel_transfer`.
+- Live transfers in the sidebar panel: progress, rate and time remaining, folded
+  from the subscription. The rate requires `swarmdrop` 0.7.0.
+- `swarmdrop_list_inbox` reports `rootPath`, `contentKind`, `title` and `missing`.
+- `swarmdrop_list_devices` takes `onlineOnly`.
+- Every tool names what its call is doing on the pending card, with a category
+  icon, instead of falling back to the tool name over raw arguments.
+- The conversation row for a transfer shows live progress, rate and time
+  remaining while it runs, and offers pause / resume / cancel — the verbs the
+  CLI will accept in that phase. Requires `swarmdrop` 0.7.0 for the rate; the
+  row falls back to the session log when no channel is available or on replay.
+- `swarmdrop_search_inbox` requires `swarmdrop` 0.7.0; an older one is reported
+  as a version requirement rather than a usage error.
+
+### Fixed
+
+- `swarmdrop_inbox_files` always returned an empty list. It read `files` off the
+  entry detail; the CLI reports them under `content.entries`.
+- Timestamps are milliseconds, not seconds. Seven doc comments and the tool
+  schema said otherwise; the code was already correct.
+
+### Changed
+
+- `tools.ts` is now `tools/`, split by domain (send · inbox · transfer · device)
+  over shared projection and failure-translation modules.
+- `controlsOf` — which of pause / resume / cancel a transfer's phase allows —
+  moved to `console-wire.ts`, where both the settings page and the conversation
+  row read it. It mirrors the CLI's own rule and there is now one copy of it.
+- A transfer's `speed` is `null` rather than `0` when nothing can be said.
 
 ## [0.3.0] - 2026-08-21
 

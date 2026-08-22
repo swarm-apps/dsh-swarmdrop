@@ -88,10 +88,159 @@ describe('MachineState', () => {
     machine.accept(frame('baseline', { nodeRunning: false, devices: [], inbox: [] }))
     const before = revision.current()
 
-    machine.accept(frame('transferChanged', { sessionId: 'x', phase: 'active' }))
     machine.accept(frame('somethingFromTheFuture', { whatever: true }))
 
     expect(revision.current()).toBe(before)
+  })
+
+  describe('transfers', () => {
+    const SESSION = 'session-1'
+
+    /** A `transferChanged` frame, with the fields the fold reads. */
+    function changed(fields: Record<string, unknown> = {}): WatchFrame {
+      return frame('transferChanged', {
+        sessionId: SESSION,
+        direction: 'send',
+        peerName: '光印-华为410',
+        phase: 'active',
+        transferredBytes: 0,
+        totalBytes: 1_000,
+        fileCount: 2,
+        updatedAt: 1,
+        ...fields,
+      })
+    }
+
+    /** A `transferProgress` frame. */
+    function progress(fields: Record<string, unknown> = {}): WatchFrame {
+      return frame('transferProgress', {
+        sessionId: SESSION,
+        direction: 'send',
+        transferredBytes: 400,
+        totalBytes: 1_000,
+        completedFiles: 0,
+        totalFiles: 2,
+        speed: 2_048,
+        eta: 30,
+        ...fields,
+      })
+    }
+
+    it('folds a phase change and a progress sample into one row', () => {
+      machine.accept(changed())
+      machine.accept(progress())
+
+      const [transfer] = machine.snapshot().transfers
+      expect(transfer).toMatchObject({
+        sessionId: SESSION,
+        peerName: '光印-华为410',
+        phase: 'active',
+        transferredBytes: 400,
+        speed: 2_048,
+        eta: 30,
+      })
+    })
+
+    /**
+     * **A phase change must not blank the rate.** The rate only ever arrives on
+     * progress frames, so replacing the row wholesale would clear it every time
+     * the phase moved — and a phase change is exactly when a transfer becomes
+     * worth looking at.
+     */
+    it('keeps the rate across a phase change that stays active', () => {
+      machine.accept(changed())
+      machine.accept(progress())
+      machine.accept(changed({ transferredBytes: 500, updatedAt: 2 }))
+
+      expect(machine.snapshot().transfers[0]?.speed).toBe(2_048)
+    })
+
+    /**
+     * Leaving `active` is the one case that *does* clear it: a paused transfer
+     * has no bytes moving, and last minute's rate describes a machine state
+     * that no longer exists.
+     */
+    it('drops the rate when the transfer stops being active', () => {
+      machine.accept(changed())
+      machine.accept(progress())
+      machine.accept(changed({ phase: 'suspended' }))
+
+      const [transfer] = machine.snapshot().transfers
+      expect(transfer?.phase).toBe('suspended')
+      expect(transfer?.speed).toBeNull()
+      expect(transfer?.eta).toBeNull()
+    })
+
+    /**
+     * `0` from the CLI means "no new bytes within a sliding window" — a stall,
+     * which is what publishing a finished file looks like. Rendering that as
+     * "0 B/s" would report a stop that is not happening, so it is normalised
+     * here rather than at each consumer.
+     */
+    it('reads a zero rate as "cannot say" rather than zero', () => {
+      machine.accept(changed())
+      machine.accept(progress({ speed: 0, eta: null }))
+
+      const [transfer] = machine.snapshot().transfers
+      expect(transfer?.speed).toBeNull()
+      expect(transfer?.eta).toBeNull()
+      // The bytes still count: the transfer did not stop existing.
+      expect(transfer?.transferredBytes).toBe(400)
+    })
+
+    /** A CLI older than 0.7.0 sends no rate at all. Same answer, no crash. */
+    it('tolerates a CLI that sends no rate', () => {
+      machine.accept(changed())
+      machine.accept(frame('transferProgress', {
+        sessionId: SESSION, transferredBytes: 400, totalBytes: 1_000,
+      }))
+
+      expect(machine.snapshot().transfers[0]?.speed).toBeNull()
+    })
+
+    it('retires a session when it reaches a terminal phase', () => {
+      machine.accept(changed())
+      machine.accept(changed({ phase: 'terminal' }))
+
+      expect(machine.snapshot().transfers).toHaveLength(0)
+    })
+
+    /**
+     * A sample for a session the mirror never heard of is dropped rather than
+     * turned into a row: it has no peer and no phase, so the panel would draw
+     * "— 42%", which is worse than drawing nothing until the next phase change.
+     */
+    it('drops a progress sample for an unknown session', () => {
+      machine.accept(progress({ sessionId: 'never-introduced' }))
+
+      expect(machine.snapshot().transfers).toHaveLength(0)
+    })
+
+    /** The baseline carries unfinished transfers, and they are adopted. */
+    it('adopts transfers from a baseline', () => {
+      machine.accept(frame('baseline', {
+        nodeRunning: true,
+        devices: [],
+        inbox: [],
+        transfers: [
+          { sessionId: 'a', direction: 'receive', peerName: 'Mac mini', phase: 'active', transferredBytes: 1, totalBytes: 2, fileCount: 1, updatedAt: 1 },
+          { sessionId: 'b', direction: 'send', peerName: 'Mac mini', phase: 'terminal', transferredBytes: 2, totalBytes: 2, fileCount: 1, updatedAt: 1 },
+        ],
+      }))
+
+      expect(machine.snapshot().transfers.map(row => row.sessionId)).toEqual(['a'])
+    })
+
+    /**
+     * The node dying is not "the rate is unknown", it is "nothing is running".
+     * Whatever survives comes back on the next baseline, with a fresh phase.
+     */
+    it('clears transfers when the node goes away', () => {
+      machine.accept(changed())
+      machine.accept(frame('nodeUnavailable'))
+
+      expect(machine.snapshot().transfers).toHaveLength(0)
+    })
   })
 
   it('reports a change for every frame it does fold', () => {

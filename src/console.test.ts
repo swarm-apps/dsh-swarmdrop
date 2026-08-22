@@ -12,9 +12,10 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { SwarmDropError } from './cli.js'
-import { controlsOf, isUnknownToCli, resolveDir, updateCheck } from './console.js'
+import { isUnknownToCli } from './cli.js'
+import { resolveDir, updateCheck } from './console.js'
 import {
-  ACTION_RELOADS, CONSOLE_SECTIONS, actionKey, type ConsoleAction,
+  ACTION_RELOADS, CONSOLE_SECTIONS, actionKey, controlsOf, type ConsoleAction,
 } from './console-wire.js'
 
 describe('controlsOf', () => {

@@ -45,7 +45,7 @@ export interface InboxEntryData {
   readonly sourceName: string
   readonly itemCount: number
   readonly totalSize: number
-  /** Unix seconds. */
+  /** Unix milliseconds — what `new Date()` takes directly. */
   readonly receivedAt: number
 }
 

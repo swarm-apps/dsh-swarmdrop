@@ -40,10 +40,11 @@ import type { PairingSession } from './pairing.js'
 import type { WatchSubscription } from './subscription.js'
 import {
   ENDPOINT_DEVICE_FORGET, ENDPOINT_NETWORK, ENDPOINT_NODE_START, ENDPOINT_NODE_STOP,
-  ENDPOINT_PAIR_BEGIN, ENDPOINT_PAIR_CANCEL, ENDPOINT_PAIR_RESPOND, ENDPOINT_STATE, PANEL_CHANNEL,
-  PANEL_INBOX_LIMIT,
+  ENDPOINT_PAIR_BEGIN, ENDPOINT_PAIR_CANCEL, ENDPOINT_PAIR_RESPOND, ENDPOINT_STATE,
+  ENDPOINT_TRANSFER_CONTROL, PANEL_CHANNEL,
+  PANEL_INBOX_LIMIT, PANEL_TRANSFER_LIMIT,
   type ActionAnswer, type ForgetRequest, type NetworkAnswer, type PairRespondRequest,
-  type PanelEndpoint, type StateAnswer, type StateRequest,
+  type PanelEndpoint, type StateAnswer, type StateRequest, type TransferControlRequest,
 } from './panel-wire.js'
 import type { Revision } from './revision.js'
 
@@ -187,6 +188,7 @@ const PANEL_ROUTES = {
     return { ok: true } satisfies ActionAnswer
   },
   [ENDPOINT_PAIR_RESPOND]: async ({ pairing, payload }) => respond(pairing, payload),
+  [ENDPOINT_TRANSFER_CONTROL]: ({ payload }) => steer(payload),
 } satisfies Record<PanelEndpoint, Route>
 
 /**
@@ -235,9 +237,47 @@ async function state(
     // baseline's worth, and shipping all of it on every state answer would
     // grow the parked response for content the panel has no room to draw.
     inboxRecent: snapshot.inbox.slice(0, PANEL_INBOX_LIMIT),
+    // Same slice, same reason. The mirror holds every unfinished transfer;
+    // the panel draws the few that fit.
+    transfers: snapshot.transfers.slice(0, PANEL_TRANSFER_LIMIT),
     pairing: pairing.snapshot(),
     version: revision.current(),
   }
+}
+
+/**
+ * Run one control verb against one transfer.
+ *
+ * The verb is validated against a closed set here rather than trusted from the
+ * payload: this route reaches a `spawn`, and "whatever the browser sent" is not
+ * something to put on a command line.
+ *
+ * ⚠️ **A refused verb is not a fault.** The CLI exits 0 and says so in its
+ * payload when a session is not in a state the verb applies to (pausing one
+ * that has not started, resuming one whose checkpoint is gone). `attempt`
+ * already reports a `SwarmDropError` as `{ ok: false }`; this one goes further
+ * and treats the CLI's own refusal the same way, so the panel shows what the
+ * CLI said instead of a transport error.
+ */
+async function steer(payload: unknown): Promise<ActionAnswer> {
+  const request = payload as TransferControlRequest | null
+  const transferId = typeof request?.transferId === 'string' ? request.transferId : ''
+  if (transferId === '') return { ok: false, message: 'no transfer was named' }
+  const verb = CONTROL_VERBS[request?.action ?? '']
+  if (verb === undefined) return { ok: false, message: 'not a transfer control action' }
+  return attempt(['transfer', verb, transferId])
+}
+
+/**
+ * The three verbs, as a table.
+ *
+ * A table rather than a union check because it doubles as the allow-list: an
+ * action that is not a key here never reaches the command line.
+ */
+const CONTROL_VERBS: Readonly<Record<string, string>> = {
+  pause: 'pause',
+  resume: 'resume',
+  cancel: 'cancel',
 }
 
 /**

@@ -23,12 +23,15 @@
  * the Context pending rather than inventing one.
  */
 
-import { createElement } from 'react'
+import { createElement, type CSSProperties } from 'react'
 import type {
   ConversationLocation, ConversationNodeContext, ConversationNodeDefinition,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ChatNodeKind, ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { formatSize } from './format.js'
+import { formatDuration, formatSize } from './format.js'
+import type { LiveSnapshot, LiveTransfer, LiveTransfersFace } from './live-transfers.js'
+import type { TransferControlAction } from '../panel-wire.js'
+import { controlsOf } from '../console-wire.js'
 
 /**
  * A keyed chat renderer's props, minus the locale.
@@ -47,6 +50,22 @@ import { formatSize } from './format.js'
  * `conversation`'s.
  */
 type NodeProps<K extends ChatNodeKind> = Omit<ChatNodeViewProps<K>, 't'>
+
+/**
+ * The transfer row's props: the log's node, plus the live face.
+ *
+ * `useLive` is what the slot machinery makes of the face's `hooks.live`
+ * observable — a selector hook, exactly like the panel's `usePanel`.
+ */
+type TransferRowProps = NodeProps<'swarmdrop-transfer'> & {
+  useLive: <T>(select: (snapshot: LiveSnapshot) => T) => T
+  onControl: LiveTransfersFace['onControl']
+}
+
+/** A count and its noun, without the "1 files" that gives away a machine. */
+function plural(count: number, noun: string): string {
+  return `${String(count)} ${noun}${count === 1 ? '' : 's'}`
+}
 
 /** What the transfer row shows. */
 export interface TransferChatData {
@@ -173,15 +192,138 @@ export const receivedDefinition: ConversationNodeDefinition<ReceivedState> = {
   },
 }
 
-/** One transfer, as a line in the conversation. */
-export function TransferRow({ node }: NodeProps<'swarmdrop-transfer'>) {
+/**
+ * One transfer, as a row in the conversation.
+ *
+ * ## Two sources, and which one wins
+ *
+ * The log says who and how it ended; the live channel says how far and how
+ * fast. **The live entry wins while it exists** — it is the same transfer, seen
+ * a moment later — and when it is gone the log's account is the whole answer.
+ * That is not a fallback for an error case: it is what every finished transfer
+ * looks like, and what every row looks like when the transcript is read back
+ * three months from now.
+ *
+ * ## Controls appear only when they would work
+ *
+ * A button is offered when the live phase says the CLI will accept it — pause
+ * while bytes move, resume while paused, cancel until it is over. Offering all
+ * three always and letting the CLI refuse would teach the user that these
+ * buttons sometimes do nothing.
+ */
+export function TransferRow({ node, useLive, onControl }: TransferRowProps) {
   const { peerName, fileCount, totalBytes, transferredBytes, phase, terminalReason } = node.data
-  const detail = phase === 'terminal'
+  const live = useLive(snapshot => snapshot[node.id])
+
+  const shown = live ?? { phase, transferredBytes, totalBytes, speed: null, eta: null, busy: false }
+  const done = shown.phase === 'terminal'
+  const percent = shown.totalBytes > 0
+    ? Math.min(100, Math.floor((shown.transferredBytes / shown.totalBytes) * 100))
+    : 0
+
+  const detail = done
     ? terminalReason === 'completed'
-      ? `sent ${String(fileCount)} file(s) · ${formatSize(totalBytes)}`
-      : `${terminalReason ?? 'ended'} · ${formatSize(transferredBytes)} of ${formatSize(totalBytes)}`
-    : `${formatSize(transferredBytes)} of ${formatSize(totalBytes)}`
-  return createElement('p', { className: 'swarmdrop-row' }, `→ ${peerName} · ${detail}`)
+      ? `sent ${plural(fileCount, 'file')} · ${formatSize(totalBytes)}`
+      : `${terminalReason ?? 'ended'} · ${formatSize(shown.transferredBytes)} of ${formatSize(totalBytes)}`
+    : [
+        `${formatSize(shown.transferredBytes)} of ${formatSize(shown.totalBytes)}`,
+        shown.speed === null ? null : `${formatSize(shown.speed)}/s`,
+        shown.eta === null ? null : `${formatDuration(shown.eta)} left`,
+      ].filter(part => part !== null).join(' · ')
+
+  return (
+    <div className="swarmdrop-row" style={rowStyle}>
+      <div style={headStyle}>
+        <span>→ {peerName} · {detail}</span>
+        {live !== undefined && <Controls live={live} id={node.id} onControl={onControl} />}
+      </div>
+      {/* The bar is for the live half only: a finished transfer's bar is either
+          a full one nobody needs or, worse, a partial one implying it is still
+          going. The sentence above already says how it ended. */}
+      {!done && (
+        <div style={trackStyle}>
+          <div style={{ ...fillStyle, width: `${String(percent)}%` }} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** English labels; a conversation row has no locale (see {@link NodeProps}). */
+const CONTROL_LABEL: Readonly<Record<TransferControlAction, string>> = {
+  pause: 'Pause',
+  resume: 'Resume',
+  cancel: 'Cancel',
+}
+
+/** The buttons for one live transfer. */
+function Controls({ live, id, onControl }: {
+  live: LiveTransfer
+  id: string
+  onControl: (transferId: string, action: TransferControlAction) => void
+}) {
+  // ⚠️ **The rule is `controlsOf`, not a table written here.** This row had its
+  // own copy for one commit and got two of the three phases wrong — it offered
+  // Cancel on a suspended transfer (the CLI refuses: there is no live actor)
+  // and Resume without checking the checkpoint survived. The settings page has
+  // read the shared rule all along; so does this row now.
+  const offered = controlsOf({ phase: live.phase, recoverable: live.recoverable })
+  if (offered.length === 0) return null
+  return (
+    <span style={controlsStyle}>
+      {offered.map(action => (
+        <button
+          key={action}
+          type="button"
+          // Disabled while one of this row's controls is in flight — not while
+          // any is: two transfers running is normal, and one busy row must not
+          // grey out the other's buttons (see `transferKey`).
+          disabled={live.busy}
+          onClick={() => { onControl(id, action) }}
+          style={buttonStyle}
+        >
+          {CONTROL_LABEL[action]}
+        </button>
+      ))}
+    </span>
+  )
+}
+
+/** Inline styles, for the reason `panel.tsx` gives at length: this bundle ships
+ * no stylesheet, and dsh's own custom properties carry the theme. */
+const rowStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4 }
+
+const headStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+}
+
+const controlsStyle: CSSProperties = { display: 'flex', gap: 4, flexShrink: 0 }
+
+const buttonStyle: CSSProperties = {
+  font: 'inherit',
+  fontSize: 11,
+  padding: '2px 8px',
+  borderRadius: 4,
+  border: '1px solid var(--dsw-alias-border-secondary)',
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)',
+  cursor: 'pointer',
+}
+
+const trackStyle: CSSProperties = {
+  height: 3,
+  borderRadius: 2,
+  background: 'var(--dsw-alias-fill-tertiary)',
+  overflow: 'hidden',
+}
+
+const fillStyle: CSSProperties = {
+  height: '100%',
+  background: 'var(--dsw-alias-fill-brand)',
+  transition: 'width 200ms linear',
 }
 
 /** One arrival from a paired device. */

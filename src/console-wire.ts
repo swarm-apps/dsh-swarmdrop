@@ -37,6 +37,8 @@
  * Same rule as `panel-wire.ts`: nothing here is a class, a `Date` or a `Map`.
  */
 
+import { flag, text, type Row } from './coerce.js'
+
 /** Read one section's contents. */
 export const ENDPOINT_CONSOLE_LOAD = 'console.load'
 
@@ -71,7 +73,7 @@ export interface ConsoleLoadRequest {
 export interface InviteRow {
   /** Opaque here; the Host passes it back to `swarmdrop invite revoke`. */
   readonly id: string
-  /** Unix seconds. */
+  /** Unix milliseconds — what `new Date()` takes directly. */
   readonly createdAt: number
   readonly expiresAt: number
   /** Already used by a device. Still listed, so its fate is visible. */
@@ -291,4 +293,38 @@ export const ACTION_RELOADS: Record<ConsoleAction['kind'], ConsoleSection> = {
   'bootstrap.add': 'bootstrap',
   'bootstrap.remove': 'bootstrap',
   'cli.checkUpdate': 'about',
+}
+
+/**
+ * Which controls apply to a transfer row.
+ *
+ * **The one place this rule lives.** It mirrors `Control::applies` in the CLI
+ * exactly, and both surfaces that offer these buttons read it from here — the
+ * settings page and the conversation row. A second copy was written once and
+ * got two of the three rows wrong; the CLI refuses those clicks, and a refused
+ * click reads as SwarmDrop being broken rather than as a row that had already
+ * stopped.
+ *
+ * It lives in the wire module because that is the one file both halves can
+ * import: it has no dependencies, and neither does `coerce`.
+ *
+ * | control | when |
+ * |---|---|
+ * | pause | `active` — pausing needs a running actor |
+ * | resume | `suspended` **and** recoverable — an unrecoverable break can only be re-sent |
+ * | cancel | `offered` / `waitingAccept` / `active` — the three "started, not finished" phases |
+ *
+ * ⚠️ **`suspended` is not cancellable**, tempting as it looks: there is no live
+ * actor to cancel, and the CLI refuses. Offering the button anyway would make
+ * SwarmDrop look broken for a row that is merely already stopped.
+ */
+export function controlsOf(row: Row): readonly TransferControl[] {
+  const phase = text(row['phase'])
+  const controls: TransferControl[] = []
+  if (phase === 'active') controls.push('pause')
+  if (phase === 'suspended' && flag(row['recoverable'])) controls.push('resume')
+  if (phase === 'offered' || phase === 'waiting_accept' || phase === 'active') {
+    controls.push('cancel')
+  }
+  return controls
 }

@@ -60,6 +60,16 @@ export const ENDPOINT_PAIR_BEGIN = 'pair.begin'
 /** Close the pairing window. The node goes back to refusing inbound requests. */
 export const ENDPOINT_PAIR_CANCEL = 'pair.cancel'
 
+/**
+ * Steer one transfer: pause, resume or cancel.
+ *
+ * One endpoint with the verb in the payload rather than three: the Host does
+ * the same thing for all three (parse an id, run one CLI verb, report the
+ * outcome), and the verb is a closed three-value set — not a way to forward an
+ * arbitrary command.
+ */
+export const ENDPOINT_TRANSFER_CONTROL = 'transfer.control'
+
 /** Answer the inbound request the user is looking at. */
 export const ENDPOINT_PAIR_RESPOND = 'pair.respond'
 
@@ -79,6 +89,7 @@ export const PANEL_ENDPOINTS = [
   ENDPOINT_PAIR_BEGIN,
   ENDPOINT_PAIR_CANCEL,
   ENDPOINT_PAIR_RESPOND,
+  ENDPOINT_TRANSFER_CONTROL,
 ] as const
 
 /** One of {@link PANEL_ENDPOINTS}. */
@@ -117,12 +128,53 @@ export interface PanelInboxEntry {
   readonly sourceName: string
   readonly itemCount: number
   readonly totalSize: number
-  /** Unix seconds. */
+  /** Unix milliseconds — what `new Date()` takes directly. */
   readonly receivedAt: number
 }
 
 /** How many inbox entries the panel carries. See {@link PanelInboxEntry}. */
 export const PANEL_INBOX_LIMIT = 5
+
+/**
+ * One transfer in flight, as the panel shows it.
+ *
+ * The panel answers "is something moving right now, and how fast" — the full
+ * list with history belongs to the settings page. So this carries the few
+ * unfinished ones and nothing that has ended.
+ */
+export interface PanelTransfer {
+  readonly sessionId: string
+  /** `send` or `receive` — the panel draws it as an arrow. */
+  readonly direction: string
+  /** The other end, as the user will recognise it. */
+  readonly peerName: string
+  /** `offered` / `waitingAccept` / `active` / `suspended`. */
+  readonly phase: string
+  readonly transferredBytes: number
+  readonly totalBytes: number
+  readonly fileCount: number
+  /** Whether an interrupted transfer can still be resumed. Half of `controlsOf`. */
+  readonly recoverable: boolean
+  /**
+   * Bytes per second, or `null` when nothing can be said — a stall, a phase
+   * with no bytes moving, or a CLI too old to report it.
+   *
+   * **Never `0`.** The Host normalises that away precisely so this side does not
+   * have to remember that `0` means "cannot say" rather than "stopped"; drawing
+   * "0 B/s" would report a stall that may not be happening.
+   */
+  readonly speed: number | null
+  /** Seconds remaining, or `null` when the core cannot say. */
+  readonly eta: number | null
+}
+
+/**
+ * How many transfers the panel carries.
+ *
+ * Five, like the inbox: a machine with more than a handful in flight is not
+ * something a side panel can usefully draw, and the settings page has the room.
+ */
+export const PANEL_TRANSFER_LIMIT = 5
 
 /** {@link ENDPOINT_STATE} request. */
 export interface StateRequest {
@@ -209,10 +261,29 @@ export interface StateAnswer {
    * that is exactly the polling the settings page is forbidden from doing.
    */
   readonly inboxRecent: readonly PanelInboxEntry[]
+  /**
+   * Transfers that have not finished, most recently touched first.
+   *
+   * Rides this answer for the same reason `inboxRecent` does — the Host already
+   * holds them, so it costs bytes rather than a process. It is also the only
+   * way the panel *can* show live progress: asking `transfer list` on a timer
+   * is the polling this design is built to avoid, and the rate would be wrong
+   * anyway (the CLI's own panel learnt that the hard way).
+   */
+  readonly transfers: readonly PanelTransfer[]
   /** The pairing desk. Rides the same answer because it shares the same clock. */
   readonly pairing: PairingSnapshot
   /** Feed straight back as the next request's `since`. */
   readonly version: number
+}
+
+/** What a caller may ask of a running transfer. */
+export type TransferControlAction = 'pause' | 'resume' | 'cancel'
+
+/** {@link ENDPOINT_TRANSFER_CONTROL} request. */
+export interface TransferControlRequest {
+  readonly transferId: string
+  readonly action: TransferControlAction
 }
 
 /** {@link ENDPOINT_PAIR_RESPOND} request. */

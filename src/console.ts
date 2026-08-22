@@ -28,13 +28,13 @@ import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { createRequire } from 'node:module'
 
-import { call, cliVersion, SwarmDropError } from './cli.js'
+import { call, cliVersion, isUnknownToCli, SwarmDropError } from './cli.js'
 import { count, flag, optional, presence, rows, text, type Row } from './coerce.js'
 import {
-  ENDPOINT_CONSOLE_ACT, ENDPOINT_CONSOLE_LOAD,
+  controlsOf, ENDPOINT_CONSOLE_ACT, ENDPOINT_CONSOLE_LOAD,
   type AboutRow, type BootstrapRow, type ConsoleAction, type ConsoleData,
   type ConsoleActionAnswer, type ConsoleLoadRequest, type ConsoleSection, type InboxRow,
-  type InviteRow, type SettingRow, type TransferControl, type TransferRow, type UpdateCheck,
+  type InviteRow, type SettingRow, type TransferRow, type UpdateCheck,
 } from './console-wire.js'
 
 
@@ -60,24 +60,6 @@ const ACTION_NEEDS: Partial<Record<ConsoleAction['kind'], string>> = {
   'bootstrap.remove': CONFIG_SURFACE_SINCE,
 }
 
-/**
- * Whether this failure is "that CLI has never heard of this command".
- *
- * clap answers an unknown subcommand or flag with a **usage error** (exit 2)
- * whose text is about argument parsing. Relayed as-is it reads as though the
- * user mistyped something, and the user typed nothing at all — they clicked a
- * button in a settings page.
- *
- * Matching on clap's wording is admittedly a string test, but the alternative
- * (probe `--version` before every call) spawns a second process per action to
- * pre-empt a case that is rare and self-describing. The fallback is safe: an
- * unmatched message is relayed unchanged.
- */
-export function isUnknownToCli(error: SwarmDropError): boolean {
-  if (error.exitCode !== 2) return false
-  return /unrecognized subcommand|unexpected argument|invalid value|unknown argument/i
-    .test(error.message)
-}
 
 /**
  * Run something, and translate "your CLI is too old" into one sentence.
@@ -183,32 +165,6 @@ function inboxOf(raw: unknown): readonly InboxRow[] {
   }))
 }
 
-/**
- * Which controls apply to a transfer row.
- *
- * Decided here rather than in the browser so the page offers only buttons the
- * CLI will accept. It mirrors `Control::applies` in the CLI exactly:
- *
- * | control | when |
- * |---|---|
- * | pause | `active` — pausing needs a running actor |
- * | resume | `suspended` **and** recoverable — an unrecoverable break can only be re-sent |
- * | cancel | `offered` / `waitingAccept` / `active` — the three "started, not finished" phases |
- *
- * ⚠️ **`suspended` is not cancellable**, tempting as it looks: there is no live
- * actor to cancel, and the CLI refuses. Offering the button anyway would make
- * SwarmDrop look broken for a row that is merely already stopped.
- */
-export function controlsOf(row: Row): readonly TransferControl[] {
-  const phase = text(row['phase'])
-  const controls: TransferControl[] = []
-  if (phase === 'active') controls.push('pause')
-  if (phase === 'suspended' && flag(row['recoverable'])) controls.push('resume')
-  if (phase === 'offered' || phase === 'waiting_accept' || phase === 'active') {
-    controls.push('cancel')
-  }
-  return controls
-}
 
 function transfersOf(raw: unknown): readonly TransferRow[] {
   return rows(raw).map((row): TransferRow => ({

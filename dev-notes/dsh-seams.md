@@ -110,6 +110,47 @@ import**（值导入会把那个包打进 bundle，见上面的 peerDependencies
 导航（而不是一页七节）也是这条的推论：一页全渲染等于开页就 spawn 六个进程，其中五个的内容
 还在折叠线以下。
 
+## Tool 的 UI：能改标题，不能放组件（2026-08-22 对着 `0.1.1-rc.2` 核实）
+
+一个自然的想法是「传输工具的卡片上放个进度条和暂停按钮」。**做不到，而且不该绕。**
+
+`presentCall` / `presentResult` 返回的是 `ToolCallView` / `ToolResultView`——一个**封闭的
+中性词汇表**：`generic` / `terminal` / `diff` / `search` / `read` / `web`。第三方加不了新
+`card`，`generic` 的 `content` 也只是 `ContentBlock[]`（文本块），不是组件。
+
+比封闭更硬的是第二条：**两个 presenter 必须是 `args` 的纯函数**，实时流式与**三个月后
+回放**都会跑（判据在 dsh 的 `docs/cookbook/adding-a-tool.zh.md`）。一张读了实时状态的卡片，
+每次重开会话都会渲染出不同的东西——所以「此刻多快、还剩多久」在这一层根本没有正确答案。
+
+能做的是**说清这次调用在做什么**：`Send 3 files to 光印-华为410` 而不是
+`swarmdrop_send_files` 加一坨原始参数，外加一个 `kind` 图标（`read` / `search` / …）。
+不写 presenter 的工具一律回退到「标题=工具名」的通用卡片。
+
+实时进度与控制按钮归**对话行**与**面板**，它们是真组件、由 RPC 通道喂，可以诚实地说
+「此刻」。见下一节。
+
+## 对话行可以带自己的 inject face（同日核实）
+
+`conversation.chat.node` 在 SlotMap 里已经声明了 `inject: ChatNodeTurnDataInjected`，看起来
+像是「这个 slot 的注入已经被占了」。**不是。** `SlotCore.register` 有两个重载，第二个对
+**任意 slot** 开放注册方自己的 face：
+
+```ts
+register<K, I extends object, ...>(
+  options: BaseOptions<K, ...> & { inject: (...args: InjectParams<K, H>) => I },
+  component: C & SlotComponent<ComposedProps<K, ..., I, ...>>,
+): () => void
+```
+
+组件 props 是四份 share 的交集（`ComposedProps`）：框架的、渲染子 slot 的、store 的、
+**注册方 inject 的**。slot 自己声明的那份走框架 share，与注册方这份不冲突。
+
+于是对话行可以同时吃两个源：**身份与终态**来自会话日志（可重放），**此刻的进度**来自 RPC。
+本仓的落地在 `client/live-transfers.ts`——对话行是**无条件注册**的（它的内容来自日志，不需要
+通道），而通道是可选的（`connection` 可能没有），所以中间要一个 holder：注册时给一个稳定的
+face，通道来了再把实时值接进去。`InjectParams` 会按 slot 的 scope 给参数，`conversation.chat.node`
+是 `session` 域，工厂拿到 `sessionId`（我们用不上——传输属于机器，不属于某次会话）。
+
 ## Client→Node：三条路，一条适合插件
 
 | 路 | 能不能用 | 判据 |

@@ -117,5 +117,9 @@ const EXIT_HINTS: Readonly<Record<number, string>> = {
  * already have their own SwarmDrop gets a tool that reports "needs a newer
  * version" forever, which reads as the plugin being broken rather than as a
  * dependency nobody bumped.
+ *
+ * ⚠️ And run `npm install` after: `npm ci` refuses a lock file that does not
+ * satisfy `package.json`, so the release workflow fails on its first step. The
+ * range and the lock are one change.
  */
 export const INBOX_SEARCH_SINCE = '0.7.0'

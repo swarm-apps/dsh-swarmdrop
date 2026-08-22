@@ -49,6 +49,19 @@ export const noticeStyle: CSSProperties = {
   wordBreak: 'break-word',
 }
 
+/**
+ * Something that has not failed but is going to.
+ *
+ * Distinct from {@link errorStyle} because the difference is real to the
+ * reader: an error is an action that did not happen, a warning is the machine
+ * being in a state where some future one will not. Colouring the second like
+ * the first teaches people to read red as "already broken" and then ignore it.
+ */
+export const warnStyle: CSSProperties = {
+  color: 'var(--dsw-alias-state-warn-primary)',
+  wordBreak: 'break-word',
+}
+
 export const monoStyle: CSSProperties = {
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
   fontSize: 11,

@@ -29,7 +29,7 @@ import {
 
 import {
   Copyable, Empty, Fact, Group,
-  cardStyle, errorStyle, inputStyle, listStyle, monoStyle, mutedStyle, rowStyle,
+  cardStyle, errorStyle, inputStyle, listStyle, monoStyle, mutedStyle, rowStyle, warnStyle,
 } from './console-ui.js'
 import { formatSize, versionSkew } from './format.js'
 import type { ConsoleState } from './console-port.js'
@@ -755,7 +755,7 @@ function VersionSkewNotice({ t, about }: SectionProps & { about: AboutRow }) {
   const skew = versionSkew(about.cli, about.daemon)
   if (skew.kind === 'aligned') return null
   return (
-    <div style={errorStyle}>
+    <div style={warnStyle}>
       {skew.kind === 'differs'
         ? t('skewDiffers', { daemon: skew.daemon, cli: about.cli ?? '' })
         : t('skewSilent')}

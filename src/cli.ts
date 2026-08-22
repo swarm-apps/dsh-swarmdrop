@@ -162,15 +162,36 @@ function pathBinary(): string | undefined {
 /**
  * The filenames a `swarmdrop` executable can have in one directory.
  *
- * One on unix. On Windows the bare name is not runnable — what exists is
- * `swarmdrop.exe`, or a `.cmd`/`.bat` shim if it was installed by npm — and
- * `PATHEXT` is the system's own list of which suffixes count.
+ * One on unix. On Windows the bare name is not runnable, so the suffix decides
+ * — and only the ones the OS can load as a process count, which is narrower
+ * than `PATHEXT`.
+ *
+ * ## Why `.cmd` and `.bat` are excluded
+ *
+ * `spawn` without `shell: true` cannot execute them; Windows needs a shell to
+ * interpret a batch file. Turning the shell on to accommodate them would put
+ * every argument we pass — paths, device names, invite strings — through
+ * `cmd.exe` quoting, which is a command-injection surface for a case we do not
+ * need: the `.cmd` a global `npm i -g swarmdrop` leaves behind is itself a shim
+ * that re-launches Node to reach the real binary. Falling through to the
+ * bundled copy finds that same binary directly, and keeps SIGTERM landing on
+ * the process that should receive it rather than on a shim.
+ *
+ * Intersected with `PATHEXT` rather than hardcoded, so a system that has
+ * genuinely removed `.EXE` from it is respected.
  */
 function executableNames(): string[] {
   if (process.platform !== 'win32') return ['swarmdrop']
-  const exts = (process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD').split(';')
-  return exts.filter(ext => ext !== '').map(ext => `swarmdrop${ext.toLowerCase()}`)
+  const configured = (process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .map(ext => ext.trim().toLowerCase())
+  return SPAWNABLE_WINDOWS_EXTS
+    .filter(ext => configured.includes(ext))
+    .map(ext => `swarmdrop${ext}`)
 }
+
+/** Windows suffixes `spawn` can launch without a shell. */
+const SPAWNABLE_WINDOWS_EXTS = ['.exe', '.com']
 
 /**
  * The `swarmdrop` that came with this package, if it is installed.

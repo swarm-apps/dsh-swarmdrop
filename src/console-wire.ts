@@ -165,11 +165,51 @@ export interface BootstrapRow {
 }
 
 /** Versions, for the About section. */
+/**
+ * Where the `swarmdrop` this plugin runs was found.
+ *
+ * Lives in the wire contract rather than next to the lookup, because both
+ * halves need it and this file is the one the browser can compile — `cli.ts`
+ * imports `node:child_process`.
+ *
+ * - `override` — `SWARMDROP_BIN` names it.
+ * - `path` — the user's own install, found on `PATH`. The default outcome for
+ *   anyone who has SwarmDrop already, and deliberately ranked above `bundled`.
+ * - `bundled` — the copy that came with this package, for someone who has none.
+ * - `missing` — nothing found; the spawn will fail with install instructions.
+ */
+export type BinarySource = 'override' | 'path' | 'bundled' | 'missing'
+
+/**
+ * What the running node says its version is.
+ *
+ * Three states, not `string | null`, because "no node" and "a node too old to
+ * answer" call for opposite advice — start one, versus restart the one you have
+ * — and collapsing them into `null` is how a page ends up telling someone with
+ * no node running that theirs is out of date.
+ */
+export type DaemonVersion =
+  /** No node is running. Nothing to be skewed against. */
+  | { readonly state: 'none' }
+  /** A node is running but does not report a version: it predates the field. */
+  | { readonly state: 'silent' }
+  | { readonly state: 'known'; readonly version: string }
+
 export interface AboutRow {
   /** This plugin's own version, from its manifest. */
   readonly plugin: string
   /** The `swarmdrop` binary's version, or `null` when it cannot be run. */
   readonly cli: string | null
+  /**
+   * Which executable that version came from.
+   *
+   * On the page because "which binary is this actually running" is the first
+   * question when the plugin and the user's terminal disagree, and until it was
+   * shown there was no way to answer it from inside dsh.
+   */
+  readonly binary: { readonly path: string; readonly source: BinarySource }
+  /** The running node's version — see {@link DaemonVersion}. */
+  readonly daemon: DaemonVersion
 }
 
 /**

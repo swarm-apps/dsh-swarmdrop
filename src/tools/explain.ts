@@ -27,8 +27,62 @@ export function explain(error: unknown, since?: string): never {
       `this needs swarmdrop ${since} or newer; the installed one does not have that command`,
     )
   }
+  // Must come before the exit-code hint: both codes this can arrive under
+  // already have a hint, and both are wrong for it. See {@link versionSkew}.
+  const skew = versionSkew(error)
+  if (skew !== null) throw new Error(skew)
   const hint = error.exitCode === null ? '' : EXIT_HINTS[error.exitCode] ?? ''
   throw new Error(`${error.message}${hint}`)
+}
+
+/**
+ * "The daemon and the binary are different versions", in English, or `null`.
+ *
+ * ## Why this needs its own branch
+ *
+ * SwarmDrop's data directory is per user, and at most one process holds the
+ * node for it; everything else becomes a client over a local channel with no
+ * version negotiation. So a binary talking to a daemon built from other code is
+ * a real, ordinary state — `swarmdrop update` alone produces it, since it
+ * replaces the executable while the daemon keeps running the old one.
+ *
+ * The CLI already says so, well, in both directions. The problem is the exit
+ * code each arrives under, because **both already have a hint and both are
+ * wrong**:
+ *
+ * - the daemon rejecting a verb it cannot parse is a *usage* error (2), so the
+ *   hint tells the model to check its arguments — it has none to fix;
+ * - the client failing to parse a *response* is "node unavailable" (3), so the
+ *   hint says to start a node — one is running, that is the whole problem.
+ *
+ * Either way the model's next move is a retry that cannot work.
+ *
+ * ## Why match on the text
+ *
+ * The wording is the only thing that distinguishes these from the ordinary
+ * failures sharing their exit codes. Matching Chinese source strings is
+ * admittedly brittle, but the failure mode is benign — an unmatched message
+ * falls through and is relayed as before — and the alternative is a dedicated
+ * exit code for a case the CLI treats as a variant of two it already has.
+ * The same trade is already made in `explainPairingExit`.
+ *
+ * The message is rewritten rather than relayed because the CLI speaks Chinese
+ * and this plugin's surface is English, for a model as much as for a person.
+ */
+function versionSkew(error: SwarmDropError): string | null {
+  // The daemon could not parse our request: it is older than this binary.
+  if (error.message.includes('常驻节点无法解析这条请求')) {
+    return 'the running SwarmDrop node is older than the `swarmdrop` this plugin'
+      + ' runs, and does not have that command. Restart it — `swarmdrop stop`'
+      + ' then `swarmdrop start -d` — so it picks up the current version.'
+  }
+  // We could not parse the daemon's response: it is newer than this binary.
+  if (error.message.includes('多半是常驻节点比这条命令新')) {
+    return 'the running SwarmDrop node is newer than the `swarmdrop` this plugin'
+      + ' runs — there are two different versions installed on this machine.'
+      + ' Check the About section for which binary is in use.'
+  }
+  return null
 }
 
 /**

@@ -166,6 +166,17 @@ export const zh = {
   updateAvailable: '有新版本 {version}，停下节点后运行 swarmdrop update 安装它。',
   updateUpToDate: '已是最新版本。',
   updateUnknown: '这份 swarmdrop 由别的方式安装（Homebrew / npm），请用那边更新。',
+  binary: '可执行文件',
+  binaryOverride: 'SWARMDROP_BIN 指定',
+  binaryPath: '你自己安装的',
+  binaryBundled: '插件自带',
+  binaryMissing: '没找到',
+  daemonVersion: '常驻节点版本',
+  daemonSilent: '不报告版本（较旧）',
+  skewDiffers: '常驻节点是 {daemon}，但这里运行的是 {cli}。新加的命令它可能认不得——'
+    + '先 swarmdrop stop 再 swarmdrop start，让它用上当前版本。',
+  skewSilent: '常驻节点比这里运行的 swarmdrop 旧。新加的命令它可能认不得——'
+    + '先 swarmdrop stop 再 swarmdrop start，让它用上当前版本。',
 } satisfies Record<string, string>
 
 /** The panel's key set. */
@@ -308,6 +319,17 @@ export const en = {
   updateAvailable: 'Version {version} is available — stop the node, then run `swarmdrop update`.',
   updateUpToDate: 'Already up to date.',
   updateUnknown: 'This swarmdrop was installed another way (Homebrew / npm); update it there.',
+  binary: 'Executable',
+  binaryOverride: 'Set by SWARMDROP_BIN',
+  binaryPath: 'Your own install',
+  binaryBundled: 'Bundled with this plugin',
+  binaryMissing: 'Not found',
+  daemonVersion: 'Running node',
+  daemonSilent: 'Does not report a version (older)',
+  skewDiffers: 'The running node is {daemon}, but this runs {cli}. It may not know newer'
+    + ' commands — `swarmdrop stop` then `swarmdrop start -d` so it picks up the current version.',
+  skewSilent: 'The running node is older than the swarmdrop this runs. It may not know newer'
+    + ' commands — `swarmdrop stop` then `swarmdrop start -d` so it picks up the current version.',
 } satisfies Record<SwarmDropKey, string>
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {

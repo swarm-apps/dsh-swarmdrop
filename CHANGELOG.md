@@ -8,6 +8,28 @@ nothing written down does not get published.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-22
+
+### Changed
+
+- A `swarmdrop` on `PATH` now outranks the copy bundled with this package.
+  SwarmDrop allows one node per user and its local channel has no version
+  negotiation, so running a different binary than the user's terminal does is
+  what produced the mismatch. `SWARMDROP_BIN` still overrides both.
+- The bundled binary is no longer pre-fetched when it is not the one that will
+  be run.
+
+### Added
+
+- About names the executable in use and where it came from, the running node's
+  version, and warns when the two are out of step.
+
+### Fixed
+
+- Exit codes 2 and 3 carried the wrong hint for a version mismatch — "check the
+  arguments" for a client with none to fix, and "start a node" for one that is
+  already running. Both cases are now named, in English.
+
 ## [0.4.1] - 2026-08-22
 
 ### Fixed

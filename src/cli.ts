@@ -16,9 +16,13 @@
  */
 
 import { spawn } from 'node:child_process'
+import { accessSync, constants } from 'node:fs'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { createInterface } from 'node:readline'
+
+import { text, type Row } from './coerce.js'
+import type { BinarySource, DaemonVersion } from './console-wire.js'
 
 /**
  * How long a one-shot CLI call may take before we give up on it.
@@ -43,28 +47,129 @@ const CALL_TIMEOUT_MS = 120_000
  */
 export const TRANSFER_TIMEOUT_MS = 24 * 60 * 60 * 1_000
 
+/** The binary this plugin drives, and where it was found. */
+export interface ResolvedBinary {
+  readonly path: string
+  readonly source: BinarySource
+}
+
 /**
- * The binary this plugin drives, resolved once.
+ * The binary this plugin drives.
  *
  * Three sources, in this order:
  *
- * 1. **`SWARMDROP_BIN`** — an explicit override always wins. Someone who
- *    already has SwarmDrop from Homebrew or the install script points at it
- *    and skips the optional dependency entirely.
- * 2. **The copy that came with this package.** `swarmdrop` is an
+ * 1. **`SWARMDROP_BIN`** — an explicit override always wins.
+ * 2. **`PATH`** — the user's own install (Homebrew, the install script,
+ *    `npm i -g`). See below for why this outranks our own copy.
+ * 3. **The copy that came with this package.** `swarmdrop` is an
  *    `optionalDependency`, so `dsh plugin add` puts it in the profile's
  *    `node_modules` — but **the profile's `.bin` is not on dsh's `PATH`**, so
  *    spawning a bare name would never find it. Without this branch the optional
- *    dependency does nothing at all, and every user needs a second, separate
- *    global install to make the plugin work.
- * 3. **`PATH`** — for a global install, and as the honest last resort. If it is
- *    not there either, the spawn fails with a message saying how to install it.
+ *    dependency does nothing at all.
+ *
+ * ## Why the user's own install beats the bundled one
+ *
+ * It looks backwards — we ship a copy pinned to a version we tested against,
+ * so why prefer some arbitrary one? Because **the client's version is not what
+ * decides anything.**
+ *
+ * SwarmDrop's data directory is per *user*, not per binary, and at most one
+ * process may hold the node for it. Every other invocation — any version —
+ * becomes a client of that one over a local channel that has **no version
+ * negotiation**, by design. So whichever binary starts the node sets the
+ * capability ceiling, and a newer client talking to an older daemon just gets
+ * its verb rejected.
+ *
+ * Which means preferring our own copy buys nothing when a node is already
+ * running, and when one is *not*, it actively causes the problem: we start a
+ * daemon the user's own `swarmdrop` in their terminal can no longer talk to.
+ * Deferring to `PATH` puts both on the same binary, and the skew never happens.
+ *
+ * The bundled copy still matters for someone who has nothing installed — and
+ * that user has no second install to skew against.
+ *
+ * If the one on `PATH` is older than a tool needs, that is a *stated* outcome:
+ * `explain(err, since)` names the version. Better than silently running a
+ * different binary than the user's terminal does.
  */
-function binary(): string {
+function resolve(): ResolvedBinary {
+  const override = process.env['SWARMDROP_BIN']
+  if (override !== undefined && override !== '') return { path: override, source: 'override' }
+
+  const onPath = pathBinary()
+  if (onPath !== undefined) return { path: onPath, source: 'path' }
+
   // Not cached: `bundledBinary` answers differently once the platform binary has
   // been fetched, and caching the first answer would pin every later call to the
   // shim — including the ones that need a signal to reach the real process.
-  return process.env['SWARMDROP_BIN'] ?? bundledBinary() ?? 'swarmdrop'
+  const bundled = bundledBinary()
+  if (bundled !== undefined) return { path: bundled, source: 'bundled' }
+
+  // Nothing found. Spawning the bare name fails with ENOENT, and `run` turns
+  // that into a message saying how to install it — an honest last resort rather
+  // than a different error about our own lookup.
+  return { path: 'swarmdrop', source: 'missing' }
+}
+
+/** Just the path, for the spawn sites. */
+function binary(): string {
+  return resolve().path
+}
+
+/** Which binary this plugin runs, and where it came from. For the About page. */
+export function resolvedBinary(): ResolvedBinary {
+  return resolve()
+}
+
+/**
+ * `swarmdrop` on `PATH`, or `undefined`.
+ *
+ * Done by hand rather than by spawning the bare name and seeing whether it
+ * fails: we have to know *before* deciding, and "did it work" only arrives
+ * after we already committed to a binary.
+ *
+ * **A miss is not cached.** A hit is — `PATH` does not change under a running
+ * process. But dsh is long-lived, and someone who installs SwarmDrop *because*
+ * the plugin told them to should not have to restart it. Re-scanning costs one
+ * `stat` per `PATH` entry, which is nothing next to the process spawn it
+ * precedes.
+ */
+let cachedPathBinary: string | undefined
+function pathBinary(): string | undefined {
+  if (cachedPathBinary !== undefined) return cachedPathBinary
+  const search = process.env['PATH']
+  if (search === undefined || search === '') return undefined
+
+  for (const dir of search.split(delimiter)) {
+    if (dir === '') continue
+    for (const name of executableNames()) {
+      const candidate = join(dir, name)
+      try {
+        // `X_OK` is what "can I run this" means on unix. On Windows it degrades
+        // to an existence check, which is why the extension list carries the
+        // "is this executable" question there instead.
+        accessSync(candidate, constants.X_OK)
+        cachedPathBinary = candidate
+        return candidate
+      } catch {
+        // Not here, or not executable. Next.
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * The filenames a `swarmdrop` executable can have in one directory.
+ *
+ * One on unix. On Windows the bare name is not runnable — what exists is
+ * `swarmdrop.exe`, or a `.cmd`/`.bat` shim if it was installed by npm — and
+ * `PATHEXT` is the system's own list of which suffixes count.
+ */
+function executableNames(): string[] {
+  if (process.platform !== 'win32') return ['swarmdrop']
+  const exts = (process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD').split(';')
+  return exts.filter(ext => ext !== '').map(ext => `swarmdrop${ext.toLowerCase()}`)
 }
 
 /**
@@ -135,20 +240,25 @@ function bundledShim(): string | undefined {
  * lazily on any run. Costs a few seconds exactly once per install, and only when
  * pnpm skipped the postinstall hook.
  *
+ * **Skipped entirely unless the bundled copy is the one we would run.** With an
+ * override or a `swarmdrop` on `PATH` the bundled shim never gets spawned, and
+ * fetching a platform binary nothing will use is a few seconds and a download
+ * spent on nothing.
+ *
  * Failures are ignored on purpose: this is an optimisation for signal delivery,
  * not a precondition. If it does not work, the shim still runs SwarmDrop.
  */
 export function warmBinary(): Promise<void> {
-  return new Promise(resolve => {
-    const path = bundledBinary()
-    // Already the real binary (or nothing bundled at all): nothing to fetch.
-    if (path === undefined || !path.endsWith('.js')) {
-      resolve()
+  return new Promise(done => {
+    const { path, source } = resolve()
+    // Not ours to warm, or already the real binary: nothing to fetch.
+    if (source !== 'bundled' || !path.endsWith('.js')) {
+      done()
       return
     }
     const child = spawn(path, ['--version'], { stdio: 'ignore' })
-    child.on('error', () => { resolve() })
-    child.on('close', () => { resolve() })
+    child.on('error', () => { done() })
+    child.on('close', () => { done() })
   })
 }
 
@@ -282,6 +392,46 @@ export async function cliVersion(): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+/**
+ * The key the CLI stamps its own version under, inside `status`'s payload.
+ *
+ * Appended to the status object rather than wrapping it, so a client that
+ * predates the field reads everything else exactly as before.
+ */
+const DAEMON_VERSION_KEY = 'daemonVersion'
+
+/**
+ * What version the *running node* is, which is not the same question as
+ * {@link cliVersion}.
+ *
+ * SwarmDrop's data directory is per user and at most one process holds the node
+ * for it; every other invocation is a client of that one over a channel with no
+ * version negotiation. So the daemon's version is what actually bounds what
+ * works — a newer client talking to an older daemon simply gets its verb
+ * rejected — and it can differ from the binary's for perfectly ordinary
+ * reasons, `swarmdrop update` being the plainest: it replaces the executable
+ * and leaves the daemon running the old code.
+ *
+ * Never throws. Every way this can fail is a *fact about the machine* the page
+ * should state, same as {@link cliVersion} — and the most common one, "the
+ * channel is not there", is not a failure at all but the answer `none`.
+ */
+export async function daemonVersion(): Promise<DaemonVersion> {
+  let status: Row
+  try {
+    status = await call<Row>(['status'])
+  } catch {
+    // Could not even ask — no binary, or it refused. `none` rather than a
+    // fourth state: with nothing able to run, "which node version" has no
+    // answer worth putting on a page, and the binary row above already says why.
+    return { state: 'none' }
+  }
+  if (text(status['status']) !== 'running') return { state: 'none' }
+  const reported = status[DAEMON_VERSION_KEY]
+  if (typeof reported !== 'string' || reported === '') return { state: 'silent' }
+  return { state: 'known', version: reported }
 }
 
 /**

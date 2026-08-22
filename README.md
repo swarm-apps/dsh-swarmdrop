@@ -110,16 +110,30 @@ the dependency and the layer together.
 
 ### The SwarmDrop binary
 
-It comes along as an optional dependency, and the plugin finds that copy
-itself — nothing else to install. If you already have SwarmDrop from Homebrew
-or the install script and would rather use it, set `SWARMDROP_BIN` to its path
-and the bundled copy is ignored.
+**Your own install wins.** If `swarmdrop` is on `PATH` — Homebrew, the install
+script, `npm i -g` — that is the one the plugin runs. A copy also comes along as
+an optional dependency, used only when there is none of your own, so
+`dsh plugin add` still gives you a working plugin with nothing else to install.
+`SWARMDROP_BIN` overrides both.
+
+The order matters more than it looks. SwarmDrop's data directory is per *user*,
+and at most one process holds the node for it; everything else becomes a client
+of that one over a local channel with **no version negotiation**. So whichever
+binary starts the node decides what works, and running a different one than your
+terminal does is how you end up with a daemon your own `swarmdrop` cannot talk
+to. Deferring to `PATH` keeps both on one binary.
+
+The About section names which binary is in use, where it came from, and the
+running node's version — with a warning when the two are out of step. That
+happens without two installs, too: `swarmdrop update` replaces the executable
+and leaves the daemon running the old code until it is restarted.
 
 You will see pnpm say `Ignored build scripts: swarmdrop` during the install.
 That is fine: the npm package fetches its platform binary from a postinstall
 hook, pnpm blocks those by default, and the shim falls back to fetching on first
 use instead. The only visible effect is that the first SwarmDrop call after
-installing takes a few seconds longer than the rest.
+installing takes a few seconds longer than the rest — and only if the bundled
+copy is the one being used at all.
 
 **`swarmdrop` 0.5.0 or newer is required.** 0.4.0 added `swarmdrop watch`, which
 this plugin subscribes to; 0.5.0 added `invite create --decide-from-stdin`, which

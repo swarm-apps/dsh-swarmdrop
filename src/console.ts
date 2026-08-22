@@ -28,7 +28,9 @@ import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { createRequire } from 'node:module'
 
-import { call, cliVersion, isUnknownToCli, SwarmDropError } from './cli.js'
+import {
+  call, cliVersion, daemonVersion, isUnknownToCli, resolvedBinary, SwarmDropError,
+} from './cli.js'
 import { count, flag, optional, presence, rows, text, type Row } from './coerce.js'
 import {
   controlsOf, ENDPOINT_CONSOLE_ACT, ENDPOINT_CONSOLE_LOAD,
@@ -228,8 +230,14 @@ function pluginVersion(): string {
   }
 }
 
+/**
+ * Two processes, run together rather than one after the other: they are
+ * independent questions and the page waits for both.
+ */
 async function about(): Promise<AboutRow> {
-  return { plugin: pluginVersion(), cli: await cliVersion() }
+  const { path, source } = resolvedBinary()
+  const [cli, daemon] = await Promise.all([cliVersion(), daemonVersion()])
+  return { plugin: pluginVersion(), cli, binary: { path, source }, daemon }
 }
 
 /** What an action leaves behind for the page to say, beyond having worked. */

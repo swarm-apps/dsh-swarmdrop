@@ -8,6 +8,8 @@
  * which was never true.
  */
 
+import type { DaemonVersion } from '../console-wire.js'
+
 /**
  * Human-readable byte count.
  *
@@ -48,4 +50,64 @@ export function formatDuration(seconds: number): string {
   const hours = Math.floor(whole / 3600)
   const minutes = Math.round((whole % 3600) / 60)
   return minutes === 0 ? `${String(hours)}h` : `${String(hours)}h ${String(minutes)}m`
+}
+
+/**
+ * Whether the running node and the binary this plugin runs are out of step.
+ *
+ * A judgement, not a formatter, but it belongs with them for the same reason:
+ * it is pure, and it is the shape the About page renders. Split out from the
+ * component so the three arms can be tested — two of them are conditions the
+ * page cannot easily be put into by hand, and getting one backwards produces a
+ * confident sentence about the wrong thing.
+ */
+export type VersionSkew =
+  | { readonly kind: 'aligned' }
+  /** A node is running but predates the version field: it is older. */
+  | { readonly kind: 'silent' }
+  | { readonly kind: 'differs'; readonly daemon: string }
+
+/**
+ * The `swarmdrop` version whose daemon started reporting itself in `status`.
+ *
+ * Needed because "reports no version" is only evidence of an *older* node when
+ * the binary asking is new enough to expect an answer. Two 0.7.1s agree with
+ * each other perfectly, and neither says a version — read without this floor,
+ * that reads as skew and the page warns about a machine that is fine.
+ */
+const DAEMON_VERSION_SINCE = '0.8.0'
+
+export function versionSkew(cli: string | null, daemon: DaemonVersion): VersionSkew {
+  // No node: there is nothing for the binary to be out of step *with*. Saying
+  // anything here is how a page tells someone who has not started SwarmDrop
+  // that their node is out of date.
+  if (daemon.state === 'none') return { kind: 'aligned' }
+  // The binary could not be run at all. That is already its own row on the
+  // page, and a version comparison with one side missing is not a second
+  // finding — it is the same one, said worse.
+  if (cli === null) return { kind: 'aligned' }
+  if (daemon.state === 'silent') {
+    return atLeast(cli, DAEMON_VERSION_SINCE) ? { kind: 'silent' } : { kind: 'aligned' }
+  }
+  return daemon.version === cli ? { kind: 'aligned' } : { kind: 'differs', daemon: daemon.version }
+}
+
+/**
+ * Whether `version` is at least `floor`, comparing `x.y.z` numerically.
+ *
+ * **Unparsable input answers `false`.** Every caller uses this to decide
+ * whether to warn, so the conservative direction is "stay quiet": a version
+ * string this does not understand is a reason to say nothing, not a reason to
+ * tell someone their setup is broken.
+ */
+function atLeast(version: string, floor: string): boolean {
+  const parts = (value: string) => value.split('.').map(part => Number.parseInt(part, 10))
+  const left = parts(version)
+  const right = parts(floor)
+  if (left.length < right.length || left.some(Number.isNaN)) return false
+  for (const [index, want] of right.entries()) {
+    const have = left[index] ?? 0
+    if (have !== want) return have > want
+  }
+  return true
 }

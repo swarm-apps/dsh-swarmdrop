@@ -31,12 +31,13 @@ import {
   Copyable, Empty, Fact, Group,
   cardStyle, errorStyle, inputStyle, listStyle, monoStyle, mutedStyle, rowStyle,
 } from './console-ui.js'
-import { formatSize } from './format.js'
+import { formatSize, versionSkew } from './format.js'
 import type { ConsoleState } from './console-port.js'
 import {
   actionKey,
-  type BootstrapRow, type ConsoleAction, type ConsoleData, type ConsoleSection,
-  type InboxRow, type InviteRow, type SettingRow, type TransferControl, type TransferRow,
+  type AboutRow, type BinarySource, type BootstrapRow, type ConsoleAction, type ConsoleData,
+  type ConsoleSection, type InboxRow, type InviteRow, type SettingRow, type TransferControl,
+  type TransferRow,
 } from '../console-wire.js'
 import type { SwarmDropKey } from './locales.js'
 import type { PanelState } from './panel-port.js'
@@ -731,6 +732,37 @@ function BootstrapCard({ node, busy, onRemove, t }: {
 
 // ────────────────────────────────────────────────────────────────── about ────
 
+/**
+ * Which locale key names each way the binary was found.
+ *
+ * A lookup rather than a chain of ternaries, so a new `BinarySource` variant
+ * fails to compile here instead of silently rendering as blank.
+ */
+const BINARY_SOURCE_KEY: Readonly<Record<BinarySource, SwarmDropKey>> = {
+  override: 'binaryOverride',
+  path: 'binaryPath',
+  bundled: 'binaryBundled',
+  missing: 'binaryMissing',
+}
+
+/**
+ * One line when the running node is not the version this plugin runs.
+ *
+ * Warning-coloured rather than muted: it is not trivia about the install, it is
+ * the reason a command the user just tried came back with something confusing.
+ */
+function VersionSkewNotice({ t, about }: SectionProps & { about: AboutRow }) {
+  const skew = versionSkew(about.cli, about.daemon)
+  if (skew.kind === 'aligned') return null
+  return (
+    <div style={errorStyle}>
+      {skew.kind === 'differs'
+        ? t('skewDiffers', { daemon: skew.daemon, cli: about.cli ?? '' })
+        : t('skewSilent')}
+    </div>
+  )
+}
+
 /** Versions, and one button to check for a newer CLI. */
 export function AboutSection(props: SectionProps) {
   const { t, console: state, act } = props
@@ -743,6 +775,22 @@ export function AboutSection(props: SectionProps) {
           <>
             <Fact label={t('pluginVersion')}>{data.about.plugin}</Fact>
             <Fact label={t('cliVersion')}>{data.about.cli ?? t('cliMissing')}</Fact>
+            <Fact label={t('binary')}>{t(BINARY_SOURCE_KEY[data.about.binary.source])}</Fact>
+            {/* The path is what makes the source row actionable — "your own
+                install" is not an answer to "which one" when there are two. */}
+            {data.about.binary.source !== 'missing' && (
+              <div style={{ ...mutedStyle, ...monoStyle, wordBreak: 'break-all' }}>
+                {data.about.binary.path}
+              </div>
+            )}
+            {data.about.daemon.state !== 'none' && (
+              <Fact label={t('daemonVersion')}>
+                {data.about.daemon.state === 'known'
+                  ? data.about.daemon.version
+                  : t('daemonSilent')}
+              </Fact>
+            )}
+            <VersionSkewNotice {...props} about={data.about} />
             <div>
               <Button
                 variant="outline"

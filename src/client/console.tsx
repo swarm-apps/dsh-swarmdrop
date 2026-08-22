@@ -35,6 +35,7 @@ import {
 import { errorStyle, mutedStyle, noticeStyle, pageStyle } from './console-ui.js'
 import type { ConsoleState } from './console-port.js'
 import type { ConsoleAction, ConsoleSection } from '../console-wire.js'
+import type { PairQrAnswer } from '../panel-wire.js'
 import type { SwarmDropKey } from './locales.js'
 import type { PanelState } from './panel-port.js'
 
@@ -56,6 +57,12 @@ export interface SwarmDropConsoleFace {
   onStartNode(): void
   onStopNode(): void
   onForget(peerId: string): void
+  /** Staff a pairing desk — the same one the sidebar panel drives. */
+  onBeginPair(): void
+  /** Close it. The node goes back to refusing inbound requests. */
+  onCancelPair(): void
+  /** Render the open invite as a QR code. See `pairing-modal.tsx`. */
+  onQr(invite: string, size: number): Promise<PairQrAnswer>
 }
 
 export type SwarmDropConsoleProps =
@@ -109,7 +116,7 @@ const bannerStyle: CSSProperties = {
 
 export function SwarmDropConsole({
   usePanel, useConsole, onOpenSection, onRefresh, onAct, onDismiss,
-  onStartNode, onStopNode, onForget, t,
+  onStartNode, onStopNode, onForget, onBeginPair, onCancelPair, onQr, t,
 }: SwarmDropConsoleProps) {
   const panel = usePanel(snapshot => snapshot)
   const consoleState = useConsole(snapshot => snapshot)
@@ -175,7 +182,20 @@ export function SwarmDropConsole({
               onForget={onForget}
             />
           )}
-          {page === 'invites' && <InvitesSection {...sectionProps} />}
+          {/* Pairing lives on this page rather than on Overview: an invite
+              *is* a pairing, and Overview is a zero-cost mirror of the panel's
+              store — putting an action that spawns a process there would cost
+              it the property that makes it the landing page. */}
+          {page === 'invites' && (
+            <InvitesSection
+              {...sectionProps}
+              pairing={panel.pairing}
+              pairingBusy={panel.busy.includes('pair')}
+              onBeginPair={onBeginPair}
+              onCancelPair={onCancelPair}
+              onQr={onQr}
+            />
+          )}
           {page === 'inbox' && <InboxSection {...sectionProps} />}
           {page === 'transfers' && <TransfersSection {...sectionProps} />}
           {page === 'settings' && <SettingsSection {...sectionProps} />}

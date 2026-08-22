@@ -131,6 +131,17 @@ export function apply(ctx: ClientContext): void {
         onStartNode: () => { void port.startNode() },
         onStopNode: () => { void port.stopNode() },
         onForget: (peerId: string) => { void port.forget(peerId) },
+        // Pairing from Settings drives the *same* desk as the sidebar panel:
+        // one `port`, and `PairingSession` is a machine-level singleton, so
+        // two open desks — two processes racing one inbound request — is not
+        // something this can produce.
+        //
+        // Answering a request is deliberately absent. That dialog belongs to
+        // the panel alone (it is always mounted); a second copy here would put
+        // two masks over one decision.
+        onBeginPair: () => { void port.beginPair() },
+        onCancelPair: () => { void port.cancelPair() },
+        onQr: (invite: string, size: number) => port.qr(invite, size),
       }),
     }, SwarmDropConsole))
 
@@ -151,6 +162,7 @@ export function apply(ctx: ClientContext): void {
         onRespondPair: (pendingId: number, accept: boolean) => {
           void port.respondPair(pendingId, accept)
         },
+        onQr: (invite: string, size: number) => port.qr(invite, size),
       }),
     }, SwarmDropPanel))
   })

@@ -32,7 +32,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api'
 
-import { call, SwarmDropError } from './cli.js'
+import { call, inviteQr, isUnknownToCli, SwarmDropError } from './cli.js'
 import { count, flag, list, optional, text } from './coerce.js'
 import { CONSOLE_ROUTES } from './console.js'
 import type { MachineState } from './machine.js'
@@ -40,10 +40,11 @@ import type { PairingSession } from './pairing.js'
 import type { WatchSubscription } from './subscription.js'
 import {
   ENDPOINT_DEVICE_FORGET, ENDPOINT_NETWORK, ENDPOINT_NODE_START, ENDPOINT_NODE_STOP,
-  ENDPOINT_PAIR_BEGIN, ENDPOINT_PAIR_CANCEL, ENDPOINT_PAIR_RESPOND, ENDPOINT_STATE,
-  ENDPOINT_TRANSFER_CONTROL, PANEL_CHANNEL,
+  ENDPOINT_PAIR_BEGIN, ENDPOINT_PAIR_CANCEL, ENDPOINT_PAIR_QR, ENDPOINT_PAIR_RESPOND,
+  ENDPOINT_STATE, ENDPOINT_TRANSFER_CONTROL, MIN_QR_FACE_PX, PANEL_CHANNEL,
   PANEL_INBOX_LIMIT, PANEL_TRANSFER_LIMIT,
-  type ActionAnswer, type ForgetRequest, type NetworkAnswer, type PairRespondRequest,
+  type ActionAnswer, type ForgetRequest, type NetworkAnswer, type PairQrAnswer,
+  type PairQrRequest, type PairRespondRequest,
   type PanelEndpoint, type StateAnswer, type StateRequest,
   type TransferControlAction, type TransferControlRequest,
 } from './panel-wire.js'
@@ -189,6 +190,10 @@ const PANEL_ROUTES = {
     return { ok: true } satisfies ActionAnswer
   },
   [ENDPOINT_PAIR_RESPOND]: async ({ pairing, payload }) => respond(pairing, payload),
+  // Unlike the three above this one *does* spawn and wait: its whole answer is
+  // what the process printed, and there is no state change for the long poll to
+  // report afterwards.
+  [ENDPOINT_PAIR_QR]: ({ payload }) => qr(payload),
   [ENDPOINT_TRANSFER_CONTROL]: ({ payload }) => steer(payload),
 } satisfies Record<PanelEndpoint, Route>
 
@@ -308,6 +313,64 @@ function respond(pairing: PairingSession, payload: unknown): ActionAnswer {
   pairing.respond(pendingId, request.accept)
   return { ok: true }
 }
+
+/**
+ * Render the open invite as a QR code.
+ *
+ * ## Why both fields are checked before they reach a command line
+ *
+ * `invite` is spawned as an argument, so the lesson `steer` learnt applies
+ * here too: a value beginning with `-` is read by clap as a flag, and
+ * `--help` would print help, exit 0, and leave this route reporting success
+ * for a code nobody rendered. An invite is a URL on SwarmDrop's own landing
+ * page; nothing else is one.
+ *
+ * `size` is checked because it is not merely a rendering hint — the encoder
+ * treats it as the address budget and drops dialable paths until the code
+ * fits. Below {@link MIN_QR_FACE_PX} it runs out of things to drop and hands
+ * back an over-budget code **without saying so**: a picture too dense to scan,
+ * indistinguishable from a good one until someone points a camera at it. So a
+ * face that small is refused here rather than rendered.
+ *
+ * Failure comes back as `{ svg: null, message }` rather than as an RPC error,
+ * for the reason {@link ActionAnswer} gives: a swarmdrop that cannot draw one
+ * is a fact about the machine, and the dialog answers it by saying so and
+ * leaving the copy/open buttons in place.
+ */
+async function qr(payload: unknown): Promise<PairQrAnswer> {
+  const request = payload as PairQrRequest | null
+  const invite = text(request?.invite)
+  if (!INVITE_LINK.test(invite)) return { svg: null, message: 'not an invite link' }
+  const size = count(request?.size)
+  if (size < MIN_QR_FACE_PX) return { svg: null, message: 'the code face is too small to scan' }
+  try {
+    return { svg: await inviteQr(invite, size) }
+  } catch (error) {
+    // Same rule as `attempt`: the CLI's own sentence is the best answer
+    // available, and anything that is not the CLI failing is a bug here rather
+    // than a fact about the machine, so it keeps travelling.
+    if (error instanceof SwarmDropError) {
+      // One failure gets classified rather than relayed: a swarmdrop that
+      // predates `invite qr` answers with clap's usage error, which says
+      // nothing a user can act on. The browser turns the flag into a sentence
+      // naming the version that would fix it.
+      if (isUnknownToCli(error)) return { svg: null, tooOld: true }
+      return { svg: null, message: error.message }
+    }
+    throw error
+  }
+}
+
+/**
+ * What an invite link looks like.
+ *
+ * Deliberately not a list of known hosts: the landing page has moved once
+ * already (`swarm-apps.github.io` → `swarmapp.cn`) and pinning the host here
+ * would make a perfectly valid invite from a newer CLI unrenderable. The
+ * scheme is what the check is actually for — it is what keeps the value from
+ * being read as a flag.
+ */
+const INVITE_LINK = /^https:\/\/[^\s]+$/
 
 /** Ask the CLI for the node's network posture. */
 async function network(): Promise<NetworkAnswer> {

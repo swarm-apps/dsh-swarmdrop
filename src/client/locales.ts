@@ -11,9 +11,13 @@
  * - **"unknown" is never rendered as "offline".** The CLI is emphatic that a
  *   null online state means nobody has probed, and the copy has to preserve
  *   that or the user goes to debug a network that is fine.
- * - **Nothing here is a sentence about what to do next.** The panel is a status
- *   surface; instructions belong to the CLI's own error text, which the panel
- *   shows verbatim when something fails.
+ * - **The panel says what is, never what to do.** It is a status surface;
+ *   instructions belong to the CLI's own error text, which the panel shows
+ *   verbatim when something fails. The two pairing **dialogs** are the
+ *   exception and the reason the rule is worded this way now: a dialog is a
+ *   task surface, and a task surface that will not say what the task is leaves
+ *   the user holding a QR code with no idea which device is supposed to read
+ *   it. Keep such sentences inside the dialogs.
  */
 
 /** Dictionary namespace owned by this plugin. */
@@ -50,11 +54,19 @@ export const zh = {
   pairing: '配对',
   addDevice: '添加设备',
   waitingForDevice: '等待设备扫码…',
-  pairingHint: '在手机上打开这个链接，页面会显示二维码；用手机上的 SwarmDrop 扫它。',
+  pairingHint: '让另一台设备上的 SwarmDrop 扫这个码；扫不了就把链接发过去。',
+  pairingInProgress: '配对进行中',
+  viewPairing: '查看',
+  qrAlt: '配对邀请二维码',
+  qrUnavailable: '二维码不可用',
+  qrNoRoom: '窗口太窄，放不下一张扫得动的码',
+  qrNeedsNewerCli: '画二维码要 swarmdrop {minimum} 起；先升级，或用下面的链接。',
   copyLink: '复制链接',
   copied: '已复制',
   copyFailed: '复制失败',
-  openLink: '打开',
+  openOnThisDevice: '在本设备打开',
+  cancelPairing: '取消配对',
+  close: '关闭',
   cancel: '取消',
   pairingRequestTitle: '收到配对请求',
   device: '设备',
@@ -215,11 +227,19 @@ export const en = {
   pairing: 'Pairing',
   addDevice: 'Add a device',
   waitingForDevice: 'Waiting for a device…',
-  pairingHint: 'Open this link on the phone — the page shows a QR code for SwarmDrop to scan.',
+  pairingHint: 'Scan this code with SwarmDrop on the other device — or send it the link.',
+  pairingInProgress: 'Pairing in progress',
+  viewPairing: 'View',
+  qrAlt: 'Pairing invite QR code',
+  qrUnavailable: 'No QR code',
+  qrNoRoom: 'Too narrow here to draw a scannable code',
+  qrNeedsNewerCli: 'Drawing a code needs swarmdrop {minimum} — upgrade, or use the link below.',
   copyLink: 'Copy link',
   copied: 'Copied',
   copyFailed: 'Copy failed',
-  openLink: 'Open',
+  openOnThisDevice: 'Open on this device',
+  cancelPairing: 'Cancel pairing',
+  close: 'Close',
   cancel: 'Cancel',
   pairingRequestTitle: 'Pairing request',
   device: 'Device',

@@ -22,6 +22,7 @@
  * |---|---|---|
  * | {@link ENDPOINT_STATE} | long poll | devices and node liveness arrive as *events* on the CLI subscription, so the browser can be told the moment they change |
  * | {@link ENDPOINT_NETWORK} | plain request | NAT class, listen addresses and relay readiness are *state*: nothing announces them, so someone has to ask |
+ * | {@link ENDPOINT_PAIR_QR} | plain request | the invite's QR is *derived*, and ~64KB of it: it changes only when the invite does, so riding the state answer would make every unrelated poll carry it |
  *
  * Collapsing them into one would force the worse half onto both — either the
  * panel polls for device changes it could have been told about, or every device
@@ -61,6 +62,18 @@ export const ENDPOINT_PAIR_BEGIN = 'pair.begin'
 export const ENDPOINT_PAIR_CANCEL = 'pair.cancel'
 
 /**
+ * Render the open invite as a QR code.
+ *
+ * Asked for rather than pushed, and deliberately **not** a field on
+ * {@link PairingSnapshot}: that rides the {@link ENDPOINT_STATE} long poll,
+ * which answers on every device change and every transfer tick. A real
+ * invite's code measures ~64KB of SVG (89 modules, one path segment each), and
+ * it changes only when the invite does — carrying it there would charge every
+ * unrelated wake-up for something the browser already has.
+ */
+export const ENDPOINT_PAIR_QR = 'pair.qr'
+
+/**
  * Steer one transfer: pause, resume or cancel.
  *
  * One endpoint with the verb in the payload rather than three: the Host does
@@ -88,6 +101,7 @@ export const PANEL_ENDPOINTS = [
   ENDPOINT_DEVICE_FORGET,
   ENDPOINT_PAIR_BEGIN,
   ENDPOINT_PAIR_CANCEL,
+  ENDPOINT_PAIR_QR,
   ENDPOINT_PAIR_RESPOND,
   ENDPOINT_TRANSFER_CONTROL,
 ] as const
@@ -297,6 +311,72 @@ export interface PairRespondRequest {
    */
   readonly pendingId: number
   readonly accept: boolean
+}
+
+/**
+ * The QR face this plugin draws, in CSS pixels.
+ *
+ * Shared by both halves because both need it to mean the same thing: the
+ * browser sizes the card around it, and the Host passes it to the CLI as the
+ * **address budget** — the encoder fits the code to this face and drops the
+ * least valuable dialable addresses until it does.
+ *
+ * 240 matches SwarmDrop's own desktop surface. At that size a typical invite
+ * needs no dropping at all, so the code this panel shows is the same one the
+ * desktop app shows.
+ */
+export const QR_FACE_PX = 240
+
+/**
+ * The smallest face worth asking for.
+ *
+ * Below roughly this, the encoder runs out of addresses to drop and hands back
+ * an over-budget code **without reporting anything** — a picture too dense for
+ * a camera, indistinguishable from a good one until someone tries to scan it.
+ * So a face this small is refused here rather than rendered: the dialog has a
+ * stated fallback (copy the link), and an unscannable code is worse than none.
+ */
+export const MIN_QR_FACE_PX = 138
+
+/** {@link ENDPOINT_PAIR_QR} request. */
+export interface PairQrRequest {
+  /**
+   * The invite to encode — the canonical link, exactly as the CLI issued it.
+   *
+   * Carried rather than read from the Host's own snapshot so the browser can
+   * ask for the code it is actually holding. The Host still shape-checks it:
+   * it reaches a command line, where a value starting with `-` would be read
+   * as a flag.
+   */
+  readonly invite: string
+  /** The side of the code itself, not the card. See {@link QR_FACE_PX}. */
+  readonly size: number
+}
+
+/**
+ * {@link ENDPOINT_PAIR_QR} answer.
+ *
+ * A code that could not be produced is **not** an RPC error, for the same
+ * reason {@link ActionAnswer} exists: "this swarmdrop cannot draw one" is a
+ * fact about the machine, and the dialog answers it by stating so and leaving
+ * the link buttons in place — not by falling into a transport `catch`.
+ */
+export interface PairQrAnswer {
+  /** The rendered SVG, or `null` when none could be produced. */
+  readonly svg: string | null
+  /** Why not, in the CLI's own words. Present only when `svg` is null. */
+  readonly message?: string
+  /**
+   * Set when the reason is simply that this `swarmdrop` predates `invite qr`.
+   *
+   * Carried as a flag rather than folded into {@link message} because the two
+   * need different answers. clap's reply to an unknown subcommand is a usage
+   * error about argument parsing — shown verbatim it reads as though the user
+   * mistyped something, and the user clicked a button. This is also the one
+   * failure with a fix worth naming, and naming a version is the browser's
+   * job: it has the dictionary and the floor.
+   */
+  readonly tooOld?: boolean
 }
 
 /**

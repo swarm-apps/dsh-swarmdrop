@@ -93,11 +93,23 @@ export function versionSkew(cli: string | null, daemon: DaemonVersion): VersionS
 }
 
 /**
- * The oldest `swarmdrop` this plugin can do anything with.
+ * The oldest `swarmdrop` this plugin is built against.
  *
- * 0.4.0 added `swarmdrop watch`, which the panel subscribes to; 0.5.0 added
- * `invite create --decide-from-stdin`, which is what lets the panel run the
- * pairing desk. Below that the plugin is not degraded, it is inert.
+ * What each step of it bought:
+ *
+ * - **0.4.0** — `swarmdrop watch`, which the panel subscribes to.
+ * - **0.5.0** — `invite create --decide-from-stdin`, which is what lets the
+ *   panel run the pairing desk at all.
+ * - **0.9.0** — `invite qr`, where the pairing dialog's QR code comes from.
+ *   See `pairing-modal.tsx` for why the browser does not encode its own.
+ *
+ * ⚠️ **The floor is not uniform, and it is worth knowing that before reading
+ * a report built on it.** Below 0.5.0 the plugin is not degraded, it is inert:
+ * no subscription, no desk. Between 0.5.0 and 0.9.0 everything works and
+ * pairing works — the invite dialog simply cannot draw a code, says so, and
+ * leaves the link. Both still report through this one constant, because "your
+ * swarmdrop is old, here is the version" is the single action that answers
+ * either, and two floors would mean two ways to be out of date.
  *
  * It matters more now that `PATH` outranks the bundled copy: someone whose
  * Homebrew install has been sitting at an old version gets *that* one, and the
@@ -105,7 +117,7 @@ export function versionSkew(cli: string | null, daemon: DaemonVersion): VersionS
  * look like "your swarmdrop is old" from the outside. Saying it on the About
  * page is what turns them into one action.
  */
-export const MINIMUM_CLI = '0.5.0'
+export const MINIMUM_CLI = '0.9.0'
 
 /** Whether the binary in use is too old for this plugin to work. */
 export function isTooOld(cli: string | null): boolean {

@@ -27,9 +27,9 @@ import {
   type CSSProperties, type ReactNode,
 } from 'react'
 import {
-  Button, IconCheckOutline16, IconCloseOutline16, IconCopyOutline16, IconPlayOutline16,
-  IconPlusOutline16, IconRefreshOutline14, IconRightUpOutline16,
-  IconStopFill16, IconTrashOutline16, StateDot, useDismissOnOutsidePointer, writeClipboard,
+  Button, IconCheckOutline16, IconPlayOutline16,
+  IconPlusOutline16, IconRefreshOutline14,
+  IconStopFill16, IconTrashOutline16, StateDot, useDismissOnOutsidePointer,
   type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HostObservable, InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -39,7 +39,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 
 import { SwarmDropMark } from './brand.js'
 import { formatDuration, formatSize } from './format.js'
-import type { PairingRequestView, PanelDevice } from '../panel-wire.js'
+import { PairInviteDialog, PairingRequestDialog, useInviteDialog } from './pairing-modal.js'
+import { QR_FACE_PX, type PairQrAnswer, type PanelDevice } from '../panel-wire.js'
 import { deviceKey, type PanelState } from './panel-port.js'
 import type { SwarmDropKey } from './locales.js'
 
@@ -57,6 +58,8 @@ export interface SwarmDropPanelFace {
   onBeginPair(): void
   onCancelPair(): void
   onRespondPair(pendingId: number, accept: boolean): void
+  /** Render the open invite as a QR code. See `pairing-modal.tsx`. */
+  onQr(invite: string, size: number): Promise<PairQrAnswer>
 }
 
 export type SwarmDropPanelProps =
@@ -185,24 +188,6 @@ const monoStyle: CSSProperties = {
   wordBreak: 'break-all',
 }
 
-/**
- * The invite link, which is about 1,150 characters.
- *
- * Long because it carries every dialable address of this node — that is what
- * lets the far side reach it without a lookup service. Shown in full rather
- * than elided because it is also the thing being copied, and a link with an
- * ellipsis in the middle is a link someone will paste.
- */
-const inviteStyle: CSSProperties = {
-  ...monoStyle,
-  marginTop: 6,
-  maxHeight: 72,
-  overflowY: 'auto',
-  padding: 6,
-  borderRadius: 6,
-  background: 'var(--dsw-alias-interactive-bg-hover)',
-}
-
 /** One `label — value` line. */
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -215,7 +200,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 
 export function SwarmDropPanel({
   wide, usePanel, onOpenChange, onStartNode, onStopNode, onForget,
-  onBeginPair, onCancelPair, onRespondPair, t,
+  onBeginPair, onCancelPair, onRespondPair, onQr, t,
 }: SwarmDropPanelProps) {
   const state = usePanel(snapshot => snapshot)
   const [open, setOpen] = useState(false)
@@ -253,18 +238,12 @@ export function SwarmDropPanel({
 
   const toggle = useCallback(() => { setOpen(current => !current) }, [])
 
+  // Shared with the settings console, which opens the same dialog against the
+  // same desk — see `useInviteDialog` for why the dialog's state is not simply
+  // the desk's phase.
+  const invite = useInviteDialog(state.pairing.phase, onBeginPair, onCancelPair)
+
   const label = t('name')
-  const pairingIsLive = state.pairing.phase !== 'idle'
-  const pairingSection = (
-    <PairingSection
-      pairing={state.pairing}
-      busy={state.busy.includes('pair')}
-      onBeginPair={onBeginPair}
-      onCancelPair={onCancelPair}
-      onRespondPair={onRespondPair}
-      t={t}
-    />
-  )
 
   return (
     <div ref={rootRef} style={{ position: 'relative' }}>
@@ -310,10 +289,6 @@ export function SwarmDropPanel({
             <div style={staleStyle} title={state.subscription}>{t('stale')}</div>
           )}
 
-          {/* Pairing leads while it is live. The panel is taller than a short
-              window, and a request waiting for a decision below the fold is a
-              request nobody answers — the far side just times out. */}
-          {pairingIsLive && pairingSection}
           <NodeSection
             state={state}
             busy={state.busy.includes('node')}
@@ -323,7 +298,19 @@ export function SwarmDropPanel({
           />
           <NetworkSection network={state.network} nodeRunning={state.nodeRunning} t={t} />
           <DeviceSection devices={state.devices} busy={state.busy} onForget={onForget} t={t} />
-          {!pairingIsLive && pairingSection}
+          {/* Directly under the devices it adds to, and in one fixed place.
+              It used to move to the top whenever a desk was open, because a
+              request rendered below the fold was a request nobody answered —
+              a problem the dialogs below solve properly, so the section can
+              now sit where it belongs and stay there. */}
+          <PairingSection
+            pairing={state.pairing}
+            busy={state.busy.includes('pair')}
+            onBeginPair={invite.begin}
+            onViewPairing={invite.view}
+            onCancelPair={invite.cancel}
+            t={t}
+          />
 
           {/* Above the inbox: what is happening now outranks what already
               arrived, and this section disappears entirely when nothing is in
@@ -336,6 +323,37 @@ export function SwarmDropPanel({
           />
         </div>
       )}
+
+      {/* ⚠️ **Outside the popover, and that is the whole point.** Both of these
+          are portalled to the document body, but React still unmounts them
+          with their owner — put them inside the `open &&` above and closing
+          the panel would take the pairing request down with it, which is the
+          exact failure this replaced. This component is mounted for as long as
+          the sidebar exists (`sidebar.footer.action` is `scope: 'root'`), so
+          out here they survive whatever the panel does.
+
+          Clicking either one dismisses the popover, because the portal is
+          outside `rootRef` and `useDismissOnOutsidePointer` counts it as an
+          outside press. Intended: the panel gets out of the way of the thing
+          it just opened. */}
+      <PairInviteDialog
+        open={invite.open}
+        invite={state.pairing.invite}
+        busy={state.busy.includes('pair')}
+        onClose={invite.close}
+        onCancelPair={invite.cancel}
+        onQr={onQr}
+        t={t}
+      />
+      {/* The panel owns this one alone — see `pairing-modal.tsx`. A second
+          copy from the settings console would put two masks and two sets of
+          buttons over one decision. */}
+      <PairingRequestDialog
+        request={state.pairing.request}
+        busy={state.busy.includes('pair')}
+        onRespondPair={onRespondPair}
+        t={t}
+      />
     </div>
   )
 }
@@ -578,18 +596,27 @@ function DeviceSection({ devices, busy, onForget, t }: {
 }
 
 /**
- * The pairing desk.
+ * The pairing desk, as a status surface shows it.
  *
- * Four phases, four different things to draw — a lookup keyed on the phase
- * rather than a chain of conditionals, so a phase added to the wire without a
- * branch here is a compile error.
+ * A row rather than a workspace. Both halves of pairing moved into dialogs
+ * (`pairing-modal.tsx`): the invite needs a 240px code the popover cannot
+ * hold, and the decision has to reach the user whether or not the panel is
+ * open. What is left here is the one thing this surface still owes them —
+ * whether a desk is open, and a way back into it.
+ *
+ * **The way back is load-bearing, not a convenience.** Closing the invite
+ * dialog deliberately leaves the desk running, so without this row a pairing
+ * in progress would be both invisible and unreachable.
+ *
+ * A lookup keyed on the phase, so a phase added to the wire without a branch
+ * here is a compile error.
  */
-function PairingSection({ pairing, busy, onBeginPair, onCancelPair, onRespondPair, t }: {
+function PairingSection({ pairing, busy, onBeginPair, onViewPairing, onCancelPair, t }: {
   pairing: PanelState['pairing']
   busy: boolean
   onBeginPair: () => void
+  onViewPairing: () => void
   onCancelPair: () => void
-  onRespondPair: (pendingId: number, accept: boolean) => void
   t: Translate
 }) {
   return (
@@ -605,170 +632,32 @@ function PairingSection({ pairing, busy, onBeginPair, onCancelPair, onRespondPai
           )}
         </>
       )}
-      {pairing.phase === 'waiting' && (
-        <WaitingForDevice invite={pairing.invite} busy={busy} onCancelPair={onCancelPair} t={t} />
-      )}
-      {pairing.phase === 'deciding' && pairing.request !== null && (
-        <RequestCard request={pairing.request} busy={busy} onRespondPair={onRespondPair} t={t} />
+      {(pairing.phase === 'waiting' || pairing.phase === 'deciding') && (
+        <div style={rowStyle}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <StateDot state="ongoing" size={8} />
+            {pairing.phase === 'deciding' ? t('pairingRequestTitle') : t('pairingInProgress')}
+          </span>
+          {/* No way back in while a decision is pending: that dialog is already
+              on screen and cannot be dismissed, so the button would open
+              something invisible underneath it. */}
+          {pairing.phase === 'waiting' && (
+            <Button variant="ghost" size="sm" onClick={onViewPairing}>
+              {t('viewPairing')}
+            </Button>
+          )}
+        </div>
       )}
       {pairing.phase === 'paired' && (
         <div style={rowStyle}>
           <span>{t('pairedWith', { device: pairing.pairedDevice ?? '' })}</span>
+          {/* "Done" closes the desk — the CLI has already exited, so this is
+              clearing the panel's own memory of it rather than cancelling. */}
           <Button variant="ghost" size="sm" onClick={onCancelPair} icon={<IconCheckOutline16 />}>
             {t('done')}
           </Button>
         </div>
       )}
-    </div>
-  )
-}
-
-/**
- * The invite is on screen and the desk is staffed.
- *
- * **No QR code is rendered here**, and that is not a shortcut: the invite link
- * points at SwarmDrop's own landing page, which draws the QR itself. Rendering
- * a second one would mean shipping an encoder in the browser bundle to produce
- * a picture of a string the page already turns into a picture.
- */
-function WaitingForDevice({ invite, busy, onCancelPair, t }: {
-  invite: string | null
-  busy: boolean
-  onCancelPair: () => void
-  t: Translate
-}) {
-  const [copied, setCopied] = useState(false)
-
-  const [copyFailed, setCopyFailed] = useState(false)
-
-  // `writeClipboard` reports failure rather than throwing — a browser can refuse
-  // the write (permissions, a non-secure origin). Claiming "Copied" when nothing
-  // was would send the user to paste an invite they do not have.
-  const copy = useCallback(() => {
-    if (invite === null) return
-    void writeClipboard(invite).then(written => {
-      setCopied(written)
-      setCopyFailed(!written)
-    })
-  }, [invite])
-
-  useEffect(() => {
-    if (!copied && !copyFailed) return
-    const timer = setTimeout(() => {
-      setCopied(false)
-      setCopyFailed(false)
-    }, 2_000)
-    return () => { clearTimeout(timer) }
-  }, [copied, copyFailed])
-
-  return (
-    <>
-      <div style={rowStyle}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <StateDot state="ongoing" size={8} />
-          {t('waitingForDevice')}
-        </span>
-        <Button variant="ghost" size="sm" disabled={busy} onClick={onCancelPair} icon={<IconCloseOutline16 />}>
-          {t('cancel')}
-        </Button>
-      </div>
-      {invite !== null && invite !== '' && (
-        <>
-          <div style={inviteStyle}>{invite}</div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={copy}
-              icon={<IconCopyOutline16 />}
-              style={copyFailed ? errorStyle : undefined}
-            >
-              {copyFailed ? t('copyFailed') : copied ? t('copied') : t('copyLink')}
-            </Button>
-            {/* `noreferrer` as well as `noopener`: the invite is a capability
-                and the landing page has no business learning where it came from. */}
-            <a href={invite} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-              <Button variant="ghost" size="sm" icon={<IconRightUpOutline16 />}>{t('openLink')}</Button>
-            </a>
-          </div>
-          <div style={hintStyle}>{t('pairingHint')}</div>
-        </>
-      )}
-    </>
-  )
-}
-
-/**
- * How the CLI classifies the link a request arrived over.
- *
- * `dcutr` is a hole-punched direct link — the CLI's terminal output calls it
- * direct, and so does this. An empty classifier means the CLI did not say, which
- * is its own answer rather than a blank cell.
- */
-const CONNECTION_LABELS = {
-  lan: 'linkLan',
-  relay: 'linkRelay',
-  direct: 'linkDirect',
-  dcutr: 'linkDirect',
-  '': 'linkUnknown',
-} as const satisfies Record<string, SwarmDropKey>
-
-/**
- * Someone is at the desk.
- *
- * The node id is shown **in full and never truncated**. It is the only thing on
- * this card the far side cannot choose: the display name is self-reported and
- * can be copied exactly, so reading the id back over the phone is what actually
- * distinguishes the user's own device from whoever grabbed the link first.
- */
-function RequestCard({ request, busy, onRespondPair, t }: {
-  request: PairingRequestView
-  busy: boolean
-  onRespondPair: (pendingId: number, accept: boolean) => void
-  t: Translate
-}) {
-  const link = CONNECTION_LABELS[request.connection as keyof typeof CONNECTION_LABELS]
-
-  return (
-    <div
-      style={{
-        padding: 8,
-        borderRadius: 8,
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'var(--dsw-alias-interactive-bg-hover)',
-      }}
-    >
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>{t('pairingRequestTitle')}</div>
-      {/* A blank name is what the far side reported, and rendering it blank
-          looks like a rendering fault rather than a fact worth noticing —
-          which is exactly the moment to check the node id below instead. */}
-      <Fact label={t('device')}>{request.device === '' ? t('unnamedDevice') : request.device}</Fact>
-      <Fact label={t('system')}>{`${request.os} · ${request.arch}`}</Fact>
-      {/* An unrecognized classifier is shown verbatim rather than dropped: a
-          newer CLI may add one, and "no link row" reads as a rendering bug. */}
-      <Fact label={t('link')}>{link === undefined ? request.connection : t(link)}</Fact>
-      <div style={{ ...monoStyle, marginTop: 4 }}>{request.peerId}</div>
-      <div style={hintStyle}>{t('verifyHint')}</div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={busy}
-          onClick={() => { onRespondPair(request.pendingId, false) }}
-          icon={<IconCloseOutline16 />}
-        >
-          {t('decline')}
-        </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          disabled={busy}
-          onClick={() => { onRespondPair(request.pendingId, true) }}
-          icon={<IconCheckOutline16 />}
-        >
-          {t('accept')}
-        </Button>
-      </div>
     </div>
   )
 }

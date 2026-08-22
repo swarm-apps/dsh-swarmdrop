@@ -456,6 +456,49 @@ export async function daemonVersion(): Promise<DaemonVersion> {
 }
 
 /**
+ * How long `swarmdrop invite qr` may take.
+ *
+ * Short, like {@link VERSION_TIMEOUT_MS} and for the same kind of reason:
+ * rendering the code is pure computation. It decodes the invite, encodes, and
+ * prints — nothing in it touches the node, the network or the local channel.
+ * A call still running after ten seconds is not slow, it is stuck, and the
+ * dialog waiting on it has a fallback to show.
+ */
+const QR_TIMEOUT_MS = 10_000
+
+/**
+ * The invite's QR code, as an SVG string.
+ *
+ * ⚠️ **Not encoded in the browser, and that is the point of the round trip.**
+ * SwarmDrop encodes every surface's QR through one module
+ * (`crates/invite/src/qr.rs`): same segmentation, same error-correction level,
+ * same quiet zone. More than consistency is at stake — that module also decides
+ * how many dialable addresses fit on the requested face and drops the least
+ * valuable ones until they do. Doing that needs the invite's structure opened
+ * up, which no browser-side encoder can do; one would quietly emit a denser
+ * code that a camera cannot read, and nothing here would know.
+ *
+ * `facePx` is the side of the code **itself**, not the card around it. It is
+ * also the address budget: ask for a smaller face and the invite carries fewer
+ * paths, so pass what will actually be drawn.
+ *
+ * Throws rather than returning null: the caller renders a stated failure in the
+ * code's place (see `pairing-modal.tsx`), and a null would have to carry the
+ * reason separately anyway.
+ */
+export async function inviteQr(invite: string, facePx: number): Promise<string> {
+  const row = await call<Row>(
+    ['invite', 'qr', invite, '--size', String(facePx)],
+    QR_TIMEOUT_MS,
+  )
+  const svg = text(row['svg'])
+  // An empty field is not an empty code — it is a CLI that answered in a shape
+  // this does not know. Saying so beats handing the browser a blank `<svg>`.
+  if (svg === '') throw new SwarmDropError('swarmdrop invite qr returned no code', null)
+  return svg
+}
+
+/**
  * `swarmdrop send` structured result for files.
  *
  * Lives here rather than in either caller because both `tools.ts` and

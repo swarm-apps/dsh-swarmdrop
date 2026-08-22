@@ -40,6 +40,8 @@ import {
   type TransferRow,
 } from '../console-wire.js'
 import type { SwarmDropKey } from './locales.js'
+import { PairInviteDialog, useInviteDialog } from './pairing-modal.js'
+import type { PairQrAnswer } from '../panel-wire.js'
 import type { PanelState } from './panel-port.js'
 import { deviceKey } from './panel-port.js'
 import type { SwarmDropConsoleProps } from './console.js'
@@ -242,16 +244,37 @@ function minutesLeft(expiresAt: number, now: number): number {
  * whoever holds it can pair. Revoking is the only way to take one back, and
  * before this page the CLI was the only place to do it.
  */
-export function InvitesSection(props: SectionProps) {
+export function InvitesSection({
+  pairing, pairingBusy, onBeginPair, onCancelPair, onQr, ...props
+}: SectionProps & {
+  /** The one desk this machine has, shared with the sidebar panel. */
+  readonly pairing: PanelState['pairing']
+  readonly pairingBusy: boolean
+  readonly onBeginPair: () => void
+  readonly onCancelPair: () => void
+  readonly onQr: (invite: string, size: number) => Promise<PairQrAnswer>
+}) {
   const { t, console: state, act } = props
   const data = dataOf(state, 'invites')
   const now = Date.now()
+
+  // The same hook the panel uses, against the same desk: opening one here is
+  // visible there, and neither surface can produce a second desk.
+  const invite = useInviteDialog(pairing.phase, onBeginPair, onCancelPair)
 
   return (
     <Group
       title={t('invites')}
       action={
         <div style={{ display: 'flex', gap: 4 }}>
+          <PairingAction
+            pairing={pairing}
+            busy={pairingBusy}
+            onBeginPair={invite.begin}
+            onViewPairing={invite.view}
+            onCancelPair={invite.cancel}
+            t={t}
+          />
           {data !== undefined && data.invites.length > 0 && (
             <Button
               variant="ghost"
@@ -285,7 +308,76 @@ export function InvitesSection(props: SectionProps) {
             </div>
           ))}
       </Pending>
+
+      {/* The invite dialog, but **not** the request one: that belongs to the
+          panel, which is mounted whether or not Settings is open. Mounting a
+          second copy here would put two masks over one decision. */}
+      <PairInviteDialog
+        open={invite.open}
+        invite={pairing.invite}
+        busy={pairingBusy}
+        onClose={invite.close}
+        onCancelPair={invite.cancel}
+        onQr={onQr}
+        t={t}
+      />
     </Group>
+  )
+}
+
+/**
+ * One button that says where the desk is, in the space one button gets.
+ *
+ * The panel can afford a row per phase; a `Group` header cannot, so the four
+ * phases share a slot. `deciding` still gets its own dead label rather than
+ * being folded into `waiting`: the request dialog is on screen and cannot be
+ * dismissed, so a live button here would offer to open something underneath
+ * it.
+ */
+function PairingAction({ pairing, busy, onBeginPair, onViewPairing, onCancelPair, t }: {
+  pairing: PanelState['pairing']
+  busy: boolean
+  onBeginPair: () => void
+  onViewPairing: () => void
+  onCancelPair: () => void
+  t: Translate
+}) {
+  if (pairing.phase === 'waiting') {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onViewPairing}
+        icon={<StateDot state="ongoing" size={8} />}
+      >
+        {t('pairingInProgress')}
+      </Button>
+    )
+  }
+  if (pairing.phase === 'deciding') {
+    return (
+      <Button variant="outline" size="sm" disabled icon={<StateDot state="ongoing" size={8} />}>
+        {t('pairingRequestTitle')}
+      </Button>
+    )
+  }
+  if (pairing.phase === 'paired') {
+    return (
+      <Button variant="ghost" size="sm" onClick={onCancelPair} icon={<IconCheckOutline16 />}>
+        {t('pairedWith', { device: pairing.pairedDevice ?? '' })}
+      </Button>
+    )
+  }
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={busy}
+      onClick={onBeginPair}
+      icon={<IconPlusOutline16 />}
+    >
+      {t('addDevice')}
+    </Button>
   )
 }
 

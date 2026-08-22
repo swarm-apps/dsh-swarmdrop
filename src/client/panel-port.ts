@@ -59,10 +59,11 @@ import { deviceKey, transferKey, type BusyKey } from './busy.js'
 
 import {
   ENDPOINT_DEVICE_FORGET, ENDPOINT_NETWORK, ENDPOINT_NODE_START, ENDPOINT_NODE_STOP,
-  ENDPOINT_PAIR_BEGIN, ENDPOINT_PAIR_CANCEL, ENDPOINT_PAIR_RESPOND, ENDPOINT_STATE,
-  ENDPOINT_TRANSFER_CONTROL, PANEL_CHANNEL,
+  ENDPOINT_PAIR_BEGIN, ENDPOINT_PAIR_CANCEL, ENDPOINT_PAIR_QR, ENDPOINT_PAIR_RESPOND,
+  ENDPOINT_STATE, ENDPOINT_TRANSFER_CONTROL, PANEL_CHANNEL,
   IDLE_PAIRING,
-  type ActionAnswer, type NetworkAnswer, type PairingSnapshot, type PanelDevice,
+  type ActionAnswer, type NetworkAnswer, type PairingSnapshot, type PairQrAnswer,
+  type PanelDevice,
   type PanelInboxEntry, type PanelTransfer, type StateAnswer, type TransferControlAction,
 } from '../panel-wire.js'
 
@@ -93,6 +94,16 @@ const NETWORK_DEADLINE_MS = 15_000
  * a minute.
  */
 const ACTION_DEADLINE_MS = 45_000
+
+/**
+ * How long the browser waits for a QR code.
+ *
+ * Shorter than an action's deadline because nothing on the far side blocks:
+ * the Host spawns a process that decodes, encodes and prints. It is also a
+ * deadline the dialog can afford to hit — it has a stated fallback to draw,
+ * and a spinner that outlives the user's patience is worse than a sentence.
+ */
+const QR_DEADLINE_MS = 15_000
 
 /**
  * Which control a call belongs to.
@@ -185,6 +196,15 @@ export interface PanelPort {
   cancelPair(): Promise<void>
   /** Answer the request the user is looking at. */
   respondPair(pendingId: number, accept: boolean): Promise<void>
+  /**
+   * Render one invite as a QR code.
+   *
+   * Answers with a value instead of folding into the state, unlike every verb
+   * around it: the code belongs to the dialog that asked for it and to nothing
+   * else on the panel. Putting it in the shared snapshot would make every
+   * consumer of that snapshot re-render when a picture arrived for one of them.
+   */
+  qr(invite: string, size: number): Promise<PairQrAnswer>
   /** Pause, resume or cancel one transfer. */
   controlTransfer(transferId: string, action: TransferControlAction): Promise<void>
   dispose(): void
@@ -490,6 +510,11 @@ export function createPanelPort(ctx: ClientContext): PanelPort {
     cancelPair: () => act('pair', ENDPOINT_PAIR_CANCEL, {}),
     respondPair: (pendingId: number, accept: boolean) =>
       act('pair', ENDPOINT_PAIR_RESPOND, { pendingId, accept }),
+    // Not through `act`: this one has an answer worth keeping, and it must not
+    // take the shared `pair` busy key — the dialog rendering a code has nothing
+    // to do with whether the desk is mid-verb.
+    qr: (invite: string, size: number) =>
+      ask<PairQrAnswer>(ENDPOINT_PAIR_QR, { invite, size }, QR_DEADLINE_MS),
     // The outcome arrives through the state loop like every other verb: the
     // phase change is what the row is waiting for, and it is already parked.
     controlTransfer: (transferId: string, action: TransferControlAction) =>

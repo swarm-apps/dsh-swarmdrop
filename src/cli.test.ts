@@ -1,7 +1,52 @@
+import { EventEmitter } from 'node:events'
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { inviteQr, isUnknownToCli, SwarmDropError } from './cli.js'
+
+/**
+ * What the last spawn was given, and what it should answer.
+ *
+ * `vi.hoisted` because the mock factory below is hoisted above every other
+ * statement in this file — a plain `const` would not exist yet when it runs.
+ */
+const spawned = vi.hoisted(() => ({
+  args: [] as string[],
+  stdout: '',
+  stderr: '',
+  code: 0 as number | null,
+}))
+
+/**
+ * A `swarmdrop` that answers from `spawned` instead of existing.
+ *
+ * The tests below are about the **command line** — argument order, and the
+ * `--json` that keeps progress off stdout. A real binary would test the CLI's
+ * behaviour rather than this file's, and the binary-resolution tests above
+ * never spawn, so nothing else here notices the mock.
+ */
+vi.mock('node:child_process', () => ({
+  spawn: (_binary: string, args: readonly string[]) => {
+    spawned.args = [...args]
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter & { setEncoding(encoding: string): void }
+      stderr: EventEmitter & { setEncoding(encoding: string): void }
+      kill(signal?: string): void
+    }
+    const pipe = () => Object.assign(new EventEmitter(), { setEncoding: () => {} })
+    child.stdout = pipe()
+    child.stderr = pipe()
+    child.kill = () => {}
+    queueMicrotask(() => {
+      if (spawned.stdout !== '') child.stdout.emit('data', spawned.stdout)
+      if (spawned.stderr !== '') child.stderr.emit('data', spawned.stderr)
+      child.emit('close', spawned.code)
+    })
+    return child
+  },
+}))
 
 /**
  * Which `swarmdrop` gets run, and in what order the sources are tried.
@@ -109,3 +154,75 @@ describe('explainWatchExit', () => {
     expect(explainWatchExit('error: the node refused', 2)).not.toContain('0.4.0')
   })
 })
+
+
+/**
+ * The QR call's command line.
+ *
+ * Pinned because every part of it is load-bearing and none of it is visible
+ * from the browser: the invite is a positional argument (a flag position would
+ * silently render nothing), `--size` is the encoder's address budget rather
+ * than a display hint, and `--json` is what keeps the SVG out of the progress
+ * stream.
+ */
+describe('inviteQr', () => {
+  const INVITE = 'https://swarmapp.cn/p/#AAAA'
+
+  beforeEach(() => {
+    spawned.args = []
+    spawned.stdout = ''
+    spawned.stderr = ''
+    spawned.code = 0
+  })
+
+  it('passes the invite positionally, with the face size and --json', async () => {
+    spawned.stdout = JSON.stringify({ svg: '<svg />' })
+    expect(await inviteQr(INVITE, 240)).toBe('<svg />')
+    expect(spawned.args).toEqual(['invite', 'qr', INVITE, '--size', '240', '--json'])
+  })
+
+  /**
+   * An answer without the field is a CLI speaking a shape this does not know —
+   * not a code that happens to be empty. Handing the browser a blank `<svg>`
+   * would draw an empty white card and call it a success.
+   */
+  it('refuses an answer that carries no code', async () => {
+    spawned.stdout = JSON.stringify({ id: 'abc' })
+    await expect(inviteQr(INVITE, 240)).rejects.toThrow(/no code/)
+  })
+
+  /** A refusal keeps the CLI's own sentence — the dialog shows it verbatim. */
+  it('relays what the CLI said when it failed', async () => {
+    spawned.stdout = ''
+    spawned.code = 2
+    await expect(inviteQr(INVITE, 240)).rejects.toThrow(/swarmdrop invite qr/)
+  })
+
+  /**
+   * A `swarmdrop` that predates `invite qr` must be recognisable as *old*,
+   * rather than as a code that would not render.
+   *
+   * This pins a chain with three links and no type to hold it together: clap's
+   * wording, `isUnknownToCli`'s pattern, and the `tooOld` flag `panel.ts` sets
+   * from it. Break any one and the dialog silently regresses from "upgrade
+   * swarmdrop" to a paragraph of usage text about a subcommand the user never
+   * typed — still technically a stated failure, and useless.
+   *
+   * The fixture is verbatim from `swarmdrop 0.8.0`, the last release without it.
+   */
+  it('lets an old swarmdrop be told apart from a failure to render', async () => {
+    spawned.stderr = [
+      "error: unrecognized subcommand 'qr'",
+      '',
+      'Usage: swarmdrop invite [OPTIONS] <COMMAND>',
+      '',
+      "For more information, try '--help'.",
+    ].join('\n')
+    spawned.code = 2
+
+    const error = await inviteQr('https://swarmapp.cn/p/#AAAA', 240).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(SwarmDropError)
+    expect(isUnknownToCli(error as SwarmDropError)).toBe(true)
+  })
+})
+

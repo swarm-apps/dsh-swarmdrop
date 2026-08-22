@@ -39,6 +39,15 @@ export function explain(error: unknown, since?: string): never {
  * hint because the CLI's own message already says everything actionable.
  */
 const EXIT_HINTS: Readonly<Record<number, string>> = {
+  // 2 is clap's usage error, and for the transfer verbs it is also how the CLI
+  // reports "that session is not in a state this action applies to": the picker
+  // filters candidates by `Control::applies` first and a miss becomes a usage
+  // error, not an entry in the result's `failed` list. Without this line a model
+  // reads the (Chinese) usage text as its own mistake and retries with different
+  // arguments forever — the loop this function exists to prevent.
+  2: ' — check the arguments; for a transfer verb it also means the session is'
+    + ' not in a state that action applies to (look it up with'
+    + ' swarmdrop_transfer_status)',
   3: ' — no SwarmDrop node is running; the user can start one with `swarmdrop start -d`',
   4: ' — that device is not reachable right now; it may be asleep',
   6: ' — the peer refused; retrying will be refused again',

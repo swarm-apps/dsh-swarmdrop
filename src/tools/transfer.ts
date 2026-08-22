@@ -85,13 +85,20 @@ interface ControlOutcome {
  * and the ones it refused, each with a reason. These tools send exactly one id,
  * so the first entry of either list is the answer.
  *
+ * ⚠️ **The common refusals never reach this function.** The CLI filters the
+ * candidate set by `Control::applies` before acting, and an id that is not in it
+ * becomes a *usage error* (exit 2), not an entry in `failed` — so "pause one
+ * that is not active" and "resume one whose checkpoint is gone" arrive as a
+ * thrown error, handled by `explain`'s hint for 2. What lands here is the race:
+ * the session passed the filter and then the domain call failed anyway.
+ *
  * ⚠️ **`done` holds id strings, not objects.** Reading it with `rows()` (which
  * keeps only objects) drops every entry, and the surrounding expression then
  * decided `applied` from `Array.isArray` alone — always true, including for a
  * verb that did nothing. Extracted into a named function so the rule is
  * testable rather than buried in a `.catch` chain.
  */
-function outcomeOf(result: ControlResult): ControlOutcome {
+export function outcomeOf(result: ControlResult): ControlOutcome {
   const failure = rows(result.failed)[0]
   if (failure !== undefined) return { applied: false, reason: text(failure['reason']) }
   const done = Array.isArray(result.done) ? result.done.length : 0
@@ -101,8 +108,6 @@ function outcomeOf(result: ControlResult): ControlOutcome {
   // there. Saying so beats claiming success.
   return { applied: false, reason: 'that transfer is not in a state this action applies to' }
 }
-
-export { outcomeOf }
 
 export const transferTools = [
   defineTool({

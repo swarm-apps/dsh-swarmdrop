@@ -37,7 +37,6 @@ import {
   type InviteRow, type SettingRow, type TransferRow, type UpdateCheck,
 } from './console-wire.js'
 
-
 /**
  * The `swarmdrop` version each capability first appeared in.
  *
@@ -59,7 +58,6 @@ const ACTION_NEEDS: Partial<Record<ConsoleAction['kind'], string>> = {
   'bootstrap.add': CONFIG_SURFACE_SINCE,
   'bootstrap.remove': CONFIG_SURFACE_SINCE,
 }
-
 
 /**
  * Run something, and translate "your CLI is too old" into one sentence.
@@ -164,7 +162,6 @@ function inboxOf(raw: unknown): readonly InboxRow[] {
     missing: flag(row['missing']),
   }))
 }
-
 
 function transfersOf(raw: unknown): readonly TransferRow[] {
   return rows(raw).map((row): TransferRow => ({

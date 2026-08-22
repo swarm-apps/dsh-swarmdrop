@@ -109,7 +109,9 @@ export const inboxTools = [
       return limited.map(inboxEntry)
     },
     presentCall: args => pending(
-      args.limit === undefined ? 'List the inbox' : `List the newest ${plural(args.limit, 'inbox entry')}`,
+      args.limit === undefined
+        ? 'List the inbox'
+        : `List the newest ${plural(args.limit, 'inbox entry', 'inbox entries')}`,
       'read',
     ),
   }),

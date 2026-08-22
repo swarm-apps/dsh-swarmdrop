@@ -64,7 +64,7 @@ export interface TransferState {
   readonly direction: string
   /** The other end, as the user will recognise it. */
   readonly peerName: string
-  /** `offered` / `waitingAccept` / `active` / `suspended` — never `terminal`, see below. */
+  /** `offered` / `waiting_accept` / `active` / `suspended` — never `terminal`, see below. */
   readonly phase: string
   readonly transferredBytes: number
   readonly totalBytes: number
@@ -324,7 +324,12 @@ export class MachineState {
       ? {
           ...row,
           transferredBytes: count(frame['transferredBytes']),
-          totalBytes: count(frame['totalBytes']),
+          // ⚠️ **Fall back to what the row already holds.** This is a merge, and
+          // `count()` answers 0 for a missing field — a progress frame that
+          // omits the total would zero it permanently, because `transferChanged`
+          // does not come again while a transfer is active. The percentage would
+          // sit at 0 for the rest of the transfer.
+          totalBytes: count(frame['totalBytes']) || row.totalBytes,
           speed: rateOf(frame),
           eta: etaOf(frame),
         }

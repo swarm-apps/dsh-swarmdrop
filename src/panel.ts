@@ -44,7 +44,8 @@ import {
   ENDPOINT_TRANSFER_CONTROL, PANEL_CHANNEL,
   PANEL_INBOX_LIMIT, PANEL_TRANSFER_LIMIT,
   type ActionAnswer, type ForgetRequest, type NetworkAnswer, type PairRespondRequest,
-  type PanelEndpoint, type StateAnswer, type StateRequest, type TransferControlRequest,
+  type PanelEndpoint, type StateAnswer, type StateRequest,
+  type TransferControlAction, type TransferControlRequest,
 } from './panel-wire.js'
 import type { Revision } from './revision.js'
 
@@ -252,32 +253,45 @@ async function state(
  * payload: this route reaches a `spawn`, and "whatever the browser sent" is not
  * something to put on a command line.
  *
- * ⚠️ **A refused verb is not a fault.** The CLI exits 0 and says so in its
- * payload when a session is not in a state the verb applies to (pausing one
- * that has not started, resuming one whose checkpoint is gone). `attempt`
- * already reports a `SwarmDropError` as `{ ok: false }`; this one goes further
- * and treats the CLI's own refusal the same way, so the panel shows what the
- * CLI said instead of a transport error.
+ * ⚠️ **A refused verb is a usage error (exit 2), not a payload.** The CLI filters
+ * the candidate set by `Control::applies` and an id outside it never reaches the
+ * result — so "pause one that is not active" comes back as a non-zero exit with
+ * the CLI's own explanation. `attempt` turns that into `{ ok: false, message }`,
+ * which is what the panel wants: the CLI's sentence rather than a transport
+ * error. Nothing extra is needed here, and the buttons rarely hit it anyway —
+ * `controlsOf` only offers verbs that phase allows.
  */
 async function steer(payload: unknown): Promise<ActionAnswer> {
   const request = payload as TransferControlRequest | null
   const transferId = typeof request?.transferId === 'string' ? request.transferId : ''
-  if (transferId === '') return { ok: false, message: 'no transfer was named' }
-  const verb = CONTROL_VERBS[request?.action ?? '']
-  if (verb === undefined) return { ok: false, message: 'not a transfer control action' }
-  return attempt(['transfer', verb, transferId])
+  // Shape-checked for the same reason the action is: it reaches `spawn`. A value
+  // starting with `-` is read by clap as a flag — `--help` would print help,
+  // exit 0, and this route would report success for a transfer nothing happened
+  // to. Session ids are UUIDs; anything else is not one.
+  if (!UUID.test(transferId)) return { ok: false, message: 'not a transfer id' }
+  const action = request?.action
+  // ⚠️ **`includes` on a frozen list, not a lookup in an object literal.** An
+  // object literal carries `Object.prototype`, so `CONTROL_VERBS['toString']`
+  // is a function rather than `undefined` — `toString`, `constructor`,
+  // `valueOf`, `hasOwnProperty` and `__proto__` all passed the old
+  // `=== undefined` gate and reached `spawn`, which then threw a TypeError this
+  // route does not catch. Not a command injection (`spawn` has no shell), but
+  // this file's own claim is that nothing outside the set reaches the command
+  // line, and it did not hold.
+  if (!isControlAction(action)) return { ok: false, message: 'not a transfer control action' }
+  return attempt(['transfer', action, transferId])
 }
 
-/**
- * The three verbs, as a table.
- *
- * A table rather than a union check because it doubles as the allow-list: an
- * action that is not a key here never reaches the command line.
- */
-const CONTROL_VERBS: Readonly<Record<string, string>> = {
-  pause: 'pause',
-  resume: 'resume',
-  cancel: 'cancel',
+/** A session id, as the CLI hands them out and parses them back. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** The three verbs. The CLI's subcommand is the action's own name. */
+const CONTROL_ACTIONS: readonly TransferControlAction[] = ['pause', 'resume', 'cancel']
+
+/** Whether this is one of the three, with no prototype to fall through to. */
+function isControlAction(value: unknown): value is TransferControlAction {
+  return typeof value === 'string'
+    && (CONTROL_ACTIONS as readonly string[]).includes(value)
 }
 
 /**

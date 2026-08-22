@@ -56,12 +56,16 @@ export function completed(title: string): GenericResultView {
 /**
  * A count and its noun, without the "1 files" that gives away a machine.
  *
+ * Pass the plural form for anything an `s` does not fix — `entry` / `entries`
+ * being the one this file needed on its second use.
+ *
  * English-only, like every other string a tool produces: these are read by the
  * model and by whoever is looking at the transcript, and dsh gives a tool no
  * locale. (The panel and the settings page are translated; they are UI.)
  */
-export function plural(count: number, noun: string): string {
-  return `${String(count)} ${noun}${count === 1 ? '' : 's'}`
+export function plural(count: number, noun: string, plural?: string): string {
+  if (count === 1) return `1 ${noun}`
+  return `${String(count)} ${plural ?? `${noun}s`}`
 }
 
 /**

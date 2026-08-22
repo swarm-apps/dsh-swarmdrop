@@ -148,7 +148,7 @@ export interface PanelTransfer {
   readonly direction: string
   /** The other end, as the user will recognise it. */
   readonly peerName: string
-  /** `offered` / `waitingAccept` / `active` / `suspended`. */
+  /** `offered` / `waiting_accept` / `active` / `suspended`. */
   readonly phase: string
   readonly transferredBytes: number
   readonly totalBytes: number

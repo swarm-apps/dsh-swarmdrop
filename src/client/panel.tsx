@@ -429,8 +429,11 @@ function TransferSection({ transfers, t }: {
 
 /** The phases a transfer can sit in without bytes moving, and what to call them. */
 const IDLE_PHASE_KEYS: Readonly<Record<string, SwarmDropKey>> = {
+  // Snake case, once. The wire is `entity::TransferPhase` with
+  // `rename_all = "snake_case"`, pinned on the CLI side by
+  // `phase_names_match_the_wire`; a camelCase key here is dead and its presence
+  // suggests the author was not sure which one arrives.
   offered: 'transferPhaseOffered',
-  waitingAccept: 'transferPhaseWaitingAccept',
   waiting_accept: 'transferPhaseWaitingAccept',
   suspended: 'transferPhaseSuspended',
 }

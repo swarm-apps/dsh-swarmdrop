@@ -265,10 +265,18 @@ function sameTransfers(a: readonly PanelTransfer[], b: readonly PanelTransfer[])
     return other !== undefined
       && transfer.sessionId === other.sessionId
       && transfer.phase === other.phase
+      && transfer.peerName === other.peerName
       && transfer.transferredBytes === other.transferredBytes
       && transfer.totalBytes === other.totalBytes
       && transfer.speed === other.speed
       && transfer.eta === other.eta
+      // ⚠️ **Every field of `PanelTransfer` belongs here.** This comparator is
+      // opt-in: a field added to the wire and forgotten here is simply never
+      // compared, and `patch()` then discards the whole updated value as
+      // "unchanged". `recoverable` was missed once — the row kept offering
+      // Resume after the checkpoint was gone, because nothing else about a
+      // suspended transfer changes at the same moment.
+      && transfer.recoverable === other.recoverable
   })
 }
 

@@ -8,6 +8,34 @@ nothing written down does not get published.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-08-22
+
+### Fixed
+
+- `swarmdrop_transfer_status` reported no failure code. `FailureCode` is a tagged
+  object on the wire, and it was read as a string, so every failed transfer came
+  back with `null` where the reason belonged.
+- The conversation row could not show that a transfer had ended: it read the
+  phase from the live channel, which drops a session the moment it reaches
+  `terminal`. The log decides that now.
+- The panel discarded a `recoverable` change, leaving Resume offered on a
+  transfer whose checkpoint was gone.
+- An inbound transfer awaiting the user's own confirmation was labelled "waiting
+  for the other end". `offered` and `waiting_accept` point in opposite
+  directions and no longer share a string.
+- `transfer.control` accepted `toString`, `constructor` and three other
+  prototype keys as actions, and any string as a transfer id — `--help` among
+  them, which the CLI answers with exit 0 and the panel reported as success.
+- A progress frame without a total zeroed the row's total for the rest of the
+  transfer.
+- Exit code 2 has a hint. It is how the CLI refuses a transfer verb the phase
+  does not allow, and without one a model reads the usage text as its own
+  mistake and retries forever.
+- `waitingAccept` is not a phase; the wire is `waiting_accept`. Four documents
+  and the model-facing schema said otherwise.
+- `InviteRow`'s timestamps are seconds, not milliseconds — 0.4.0 swept them into
+  a correction that only applied to the inbox and transfer ones.
+
 ## [0.4.0] - 2026-08-22
 
 ### Added

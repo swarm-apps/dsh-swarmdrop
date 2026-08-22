@@ -215,18 +215,31 @@ export function TransferRow({ node, useLive, onControl }: TransferRowProps) {
   const { peerName, fileCount, totalBytes, transferredBytes, phase, terminalReason } = node.data
   const live = useLive(snapshot => snapshot[node.id])
 
-  const shown = live ?? { phase, transferredBytes, totalBytes, speed: null, eta: null, busy: false }
-  const done = shown.phase === 'terminal'
-  const percent = shown.totalBytes > 0
-    ? Math.min(100, Math.floor((shown.transferredBytes / shown.totalBytes) * 100))
+  const shown = live ?? {
+    phase, transferredBytes, totalBytes, speed: null, eta: null, recoverable: false, busy: false,
+  }
+  // ⚠️ **The log decides that it ended, and the log alone.** `machine.ts` drops a
+  // session from the live table the moment it reaches `terminal`, so the live
+  // phase is *never* `terminal` — reading `done` off it would mean a row that
+  // has a live entry can never show its own ending. The two paths also have
+  // different latencies (a local append versus a long-poll answer), so for a
+  // window after the log records the outcome the row would still be drawing a
+  // progress bar over a transfer that is over.
+  const done = phase === 'terminal' || shown.phase === 'terminal'
+  // Totals from the same source as the phase, for the same reason: the log's
+  // total comes from `swarmdrop/sent`, the wire's from `TransferProjection`, and
+  // mixing them makes the number jump when the channel attaches.
+  const total = done ? totalBytes : shown.totalBytes
+  const percent = total > 0
+    ? Math.min(100, Math.floor((shown.transferredBytes / total) * 100))
     : 0
 
   const detail = done
     ? terminalReason === 'completed'
       ? `sent ${plural(fileCount, 'file')} · ${formatSize(totalBytes)}`
-      : `${terminalReason ?? 'ended'} · ${formatSize(shown.transferredBytes)} of ${formatSize(totalBytes)}`
+      : `${terminalReason ?? 'ended'} · ${formatSize(shown.transferredBytes)} of ${formatSize(total)}`
     : [
-        `${formatSize(shown.transferredBytes)} of ${formatSize(shown.totalBytes)}`,
+        `${formatSize(shown.transferredBytes)} of ${formatSize(total)}`,
         shown.speed === null ? null : `${formatSize(shown.speed)}/s`,
         shown.eta === null ? null : `${formatDuration(shown.eta)} left`,
       ].filter(part => part !== null).join(' · ')
@@ -235,7 +248,7 @@ export function TransferRow({ node, useLive, onControl }: TransferRowProps) {
     <div className="swarmdrop-row" style={rowStyle}>
       <div style={headStyle}>
         <span>→ {peerName} · {detail}</span>
-        {live !== undefined && <Controls live={live} id={node.id} onControl={onControl} />}
+        {live !== undefined && !done && <Controls live={live} id={node.id} onControl={onControl} />}
       </div>
       {/* The bar is for the live half only: a finished transfer's bar is either
           a full one nobody needs or, worse, a partial one implying it is still
@@ -279,8 +292,11 @@ function Controls({ live, id, onControl }: {
           // any is: two transfers running is normal, and one busy row must not
           // grey out the other's buttons (see `transferKey`).
           disabled={live.busy}
+          aria-busy={live.busy}
           onClick={() => { onControl(id, action) }}
-          style={buttonStyle}
+          // A `disabled` button that looks identical to an enabled one teaches
+          // the user to click it again.
+          style={live.busy ? { ...buttonStyle, opacity: 0.5, cursor: 'default' } : buttonStyle}
         >
           {CONTROL_LABEL[action]}
         </button>

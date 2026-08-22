@@ -117,6 +117,14 @@ describe('inboxFile', () => {
 })
 
 describe('transferRow', () => {
+  /**
+   * A `transfer list --json` row as the CLI actually serialises `TransferProjection`.
+   *
+   * **No `speed`/`eta` here on purpose.** Those are not on the projection — a
+   * running daemon annotates them onto the answer, and a machine with no daemon
+   * gets this shape. An earlier version of this fixture invented them, which
+   * made three tests vouch for a payload that does not exist.
+   */
   const ROW = {
     sessionId: 'abc',
     direction: 'send',
@@ -127,18 +135,35 @@ describe('transferRow', () => {
     files: [{ fileId: 1 }, { fileId: 2 }],
     recoverable: false,
     failure: null,
-    speed: 2048,
-    eta: 30,
   }
 
-  it('projects the rate the CLI reported', () => {
+  it('projects a row that carries no rate', () => {
     expect(transferRow(ROW)).toMatchObject({
       transferId: 'abc',
       totalBytes: 1000,
       fileCount: 2,
-      speed: 2048,
-      eta: 30,
+      speed: null,
+      eta: null,
     })
+  })
+
+  /** With a daemon running, `ProgressCache::annotate` adds these two. */
+  it('projects the rate a running daemon annotated on', () => {
+    expect(transferRow({ ...ROW, speed: 2048, eta: 30 }))
+      .toMatchObject({ speed: 2048, eta: 30 })
+  })
+
+  /**
+   * `failure` is an internally tagged enum — `{"code":"offerFailed"}`, sometimes
+   * with parameters beside it. Read as a string it is `null` for every failed
+   * transfer, which is precisely when a model needs to say why.
+   */
+  it('reads the failure code out of the tagged object', () => {
+    expect(transferRow({ ...ROW, failure: { code: 'offerFailed' } }).failure)
+      .toBe('offerFailed')
+    expect(transferRow({ ...ROW, failure: { code: 'sessionExpired', retentionDays: 7 } }).failure)
+      .toBe('sessionExpired')
+    expect(transferRow(ROW).failure).toBeNull()
   })
 
   /**
@@ -151,10 +176,10 @@ describe('transferRow', () => {
     expect(transferRow({ ...ROW, speed: 0, eta: null })).toMatchObject({ speed: null, eta: null })
   })
 
-  /** A CLI older than 0.7.0 sends no rate at all. Same answer, no crash. */
-  it('tolerates a row with no rate fields', () => {
-    const { speed, eta, ...older } = ROW
-    expect(transferRow(older)).toMatchObject({ speed: null, eta: null })
+  /** Garbage in those fields is "cannot say", not a crash. */
+  it('tolerates nonsense in the rate fields', () => {
+    expect(transferRow({ ...ROW, speed: 'fast', eta: {} }))
+      .toMatchObject({ speed: null, eta: null })
   })
 })
 

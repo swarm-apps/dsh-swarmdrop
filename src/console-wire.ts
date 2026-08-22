@@ -73,7 +73,15 @@ export interface ConsoleLoadRequest {
 export interface InviteRow {
   /** Opaque here; the Host passes it back to `swarmdrop invite revoke`. */
   readonly id: string
-  /** Unix milliseconds — what `new Date()` takes directly. */
+  /**
+   * Unix **seconds** — unlike every other timestamp on this wire.
+   *
+   * The invite registry keeps them in seconds (`INVITE_TTL_SECS = 86_400`), so
+   * the consumer multiplies by 1000 before `new Date()`. A sweep that "fixed"
+   * this comment to milliseconds along with the inbox and transfer ones would
+   * send the next reader to delete that multiplication, and the countdown lands
+   * in 1970.
+   */
   readonly createdAt: number
   readonly expiresAt: number
   /** Already used by a device. Still listed, so its fate is visible. */
@@ -312,7 +320,7 @@ export const ACTION_RELOADS: Record<ConsoleAction['kind'], ConsoleSection> = {
  * |---|---|
  * | pause | `active` — pausing needs a running actor |
  * | resume | `suspended` **and** recoverable — an unrecoverable break can only be re-sent |
- * | cancel | `offered` / `waitingAccept` / `active` — the three "started, not finished" phases |
+ * | cancel | `offered` / `waiting_accept` / `active` — the three "started, not finished" phases |
  *
  * ⚠️ **`suspended` is not cancellable**, tempting as it looks: there is no live
  * actor to cancel, and the CLI refuses. Offering the button anyway would make

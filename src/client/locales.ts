@@ -83,7 +83,10 @@ export const zh = {
   // 报告一个没发生的停滞。
   transferUnknownRate: '—',
   transferEta: '剩余 {eta}',
-  transferPhaseOffered: '等待对方确认',
+  // 两个阶段方向相反，不能共用一句：`offered` 是**收到**对端的 Offer、等本机用户
+  // 点接受（`TransferState::offered`），`waiting_accept` 才是已发出、等对端。写成
+  // 同一句会让一条需要用户自己确认的入站传输显示「等对方」——于是没人去动它。
+  transferPhaseOffered: '等你确认',
   transferPhaseWaitingAccept: '等待对方确认',
   transferPhaseSuspended: '已暂停',
 
@@ -229,7 +232,7 @@ export const en = {
   transferReceiving: 'From',
   transferUnknownRate: '—',
   transferEta: '{eta} left',
-  transferPhaseOffered: 'Waiting for the other end',
+  transferPhaseOffered: 'Waiting for you',
   transferPhaseWaitingAccept: 'Waiting for the other end',
   transferPhaseSuspended: 'Paused',
 

@@ -22,10 +22,14 @@
  * not the same as an empty one, and a panel that renders `''` for it looks
  * broken rather than honest.
  *
- * ⚠️ **The Node half only.** The browser bundle cannot import this file: it
- * would drag `cli.ts`'s module graph — `node:child_process` and all — into a
- * page. The browser's own tri-state reading of `online` is a deliberate second
- * copy for that reason.
+ * ⚠️ **Both halves import this.** It has no dependencies of its own, so the
+ * browser bundle takes it too — `console-wire.ts` reads `text`/`flag` from here
+ * and ships in `lib/client.js`. An earlier version of this note claimed the
+ * opposite ("would drag `cli.ts`'s module graph into a page"), which was never
+ * true and made the file look off-limits to the half that can use it.
+ *
+ * The browser's own tri-state reading of `online` predates that; it is a second
+ * copy with no remaining reason, and merging it is a cleanup waiting to happen.
  */
 
 /** One untrusted JSON object, as the CLI hands it over. */

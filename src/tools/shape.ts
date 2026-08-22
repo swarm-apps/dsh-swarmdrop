@@ -147,8 +147,24 @@ export function transferRow(row: Readonly<Record<string, unknown>>) {
     speed: typeof speed === 'number' && Number.isFinite(speed) && speed >= 1 ? speed : null,
     eta: typeof eta === 'number' && Number.isFinite(eta) && eta >= 0 ? eta : null,
     recoverable: flag(row['recoverable']),
-    failure: optional(row['failure']),
+    failure: failureCodeOf(row['failure']),
   }
+}
+
+/**
+ * The machine-readable failure code, out of the CLI's tagged object.
+ *
+ * ⚠️ **Not a string.** `FailureCode` is an internally tagged enum, so the wire
+ * carries `{"code":"offerFailed"}` — sometimes with parameters beside it
+ * (`{"code":"sessionExpired","retentionDays":7}`). Reading it as a string gives
+ * `null` for every failed transfer, which is exactly when a model needs to be
+ * able to say why. The parameters are dropped on purpose: the code is what a
+ * model branches on, and the CLI's own message already carries the numbers.
+ */
+function failureCodeOf(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null
+  const code = (value as Record<string, unknown>)['code']
+  return typeof code === 'string' ? code : null
 }
 
 /** The schema {@link transferRow} produces. */
@@ -170,8 +186,9 @@ export const TRANSFER_SCHEMA = {
       type: 'string',
       required: true,
       description:
-        "'offered' / 'waitingAccept' / 'active' / 'suspended' / 'terminal'. Only 'active' "
-        + 'is moving bytes.',
+        "'offered' / 'waiting_accept' / 'active' / 'suspended' / 'terminal'. Only 'active' "
+        + "is moving bytes. 'offered' means this machine was offered something and has not "
+        + "answered yet; 'waiting_accept' means the other end has not.",
     },
     transferredBytes: { type: 'integer', required: true },
     totalBytes: { type: 'integer', required: true },

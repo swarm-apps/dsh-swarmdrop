@@ -177,6 +177,8 @@ export const zh = {
     + '先 swarmdrop stop 再 swarmdrop start，让它用上当前版本。',
   skewSilent: '常驻节点比这里运行的 swarmdrop 旧。新加的命令它可能认不得——'
     + '先 swarmdrop stop 再 swarmdrop start，让它用上当前版本。',
+  cliTooOld: '这份 swarmdrop 是 {version}，插件至少需要 {minimum}。升级它'
+    + '（brew upgrade swarmdrop / swarmdrop update），或用 SWARMDROP_BIN 指向别的一份。',
 } satisfies Record<string, string>
 
 /** The panel's key set. */
@@ -330,6 +332,8 @@ export const en = {
     + ' commands — `swarmdrop stop` then `swarmdrop start -d` so it picks up the current version.',
   skewSilent: 'The running node is older than the swarmdrop this runs. It may not know newer'
     + ' commands — `swarmdrop stop` then `swarmdrop start -d` so it picks up the current version.',
+  cliTooOld: 'This swarmdrop is {version}; the plugin needs {minimum} or newer. Upgrade it'
+    + ' (`brew upgrade swarmdrop`, `swarmdrop update`), or point SWARMDROP_BIN at another one.',
 } satisfies Record<SwarmDropKey, string>
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {

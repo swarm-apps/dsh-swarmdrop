@@ -85,3 +85,27 @@ describe('binary resolution', () => {
     expect((await resolveFresh()).source).toBe('path')
   })
 })
+
+describe('explainWatchExit', () => {
+  /**
+   * The likeliest subscription failure now that `PATH` outranks the bundled
+   * copy: an old install is the one that gets used, and clap answers `watch`
+   * with a usage error about arguments the panel never typed.
+   */
+  it('names the version when the binary predates `watch`', async () => {
+    const { explainWatchExit } = await import('./cli.js')
+    expect(explainWatchExit("error: unrecognized subcommand 'watch'", 2))
+      .toContain('0.4.0')
+  })
+
+  it('falls back to the exit code for anything else', async () => {
+    const { explainWatchExit } = await import('./cli.js')
+    expect(explainWatchExit('some other trouble', 3)).toContain('3')
+  })
+
+  /** A real usage error on a modern binary must not be blamed on the version. */
+  it('does not claim an old binary for an unrelated exit 2', async () => {
+    const { explainWatchExit } = await import('./cli.js')
+    expect(explainWatchExit('error: the node refused', 2)).not.toContain('0.4.0')
+  })
+})

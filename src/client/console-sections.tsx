@@ -31,7 +31,7 @@ import {
   Copyable, Empty, Fact, Group,
   cardStyle, errorStyle, inputStyle, listStyle, monoStyle, mutedStyle, rowStyle, warnStyle,
 } from './console-ui.js'
-import { formatSize, versionSkew } from './format.js'
+import { formatSize, isTooOld, MINIMUM_CLI, versionSkew } from './format.js'
 import type { ConsoleState } from './console-port.js'
 import {
   actionKey,
@@ -752,6 +752,17 @@ const BINARY_SOURCE_KEY: Readonly<Record<BinarySource, SwarmDropKey>> = {
  * the reason a command the user just tried came back with something confusing.
  */
 function VersionSkewNotice({ t, about }: SectionProps & { about: AboutRow }) {
+  // Too old to work at all comes first, and replaces the skew line rather than
+  // stacking with it: both would be true at once for an old install, and
+  // "upgrade this" is the move either way. Two warnings for one action reads as
+  // two problems.
+  if (isTooOld(about.cli)) {
+    return (
+      <div style={warnStyle}>
+        {t('cliTooOld', { version: about.cli ?? '', minimum: MINIMUM_CLI })}
+      </div>
+    )
+  }
   const skew = versionSkew(about.cli, about.daemon)
   if (skew.kind === 'aligned') return null
   return (

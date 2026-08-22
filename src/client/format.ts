@@ -93,6 +93,28 @@ export function versionSkew(cli: string | null, daemon: DaemonVersion): VersionS
 }
 
 /**
+ * The oldest `swarmdrop` this plugin can do anything with.
+ *
+ * 0.4.0 added `swarmdrop watch`, which the panel subscribes to; 0.5.0 added
+ * `invite create --decide-from-stdin`, which is what lets the panel run the
+ * pairing desk. Below that the plugin is not degraded, it is inert.
+ *
+ * It matters more now that `PATH` outranks the bundled copy: someone whose
+ * Homebrew install has been sitting at an old version gets *that* one, and the
+ * failures it produces (a subscription that exits, tools refusing verbs) do not
+ * look like "your swarmdrop is old" from the outside. Saying it on the About
+ * page is what turns them into one action.
+ */
+export const MINIMUM_CLI = '0.5.0'
+
+/** Whether the binary in use is too old for this plugin to work. */
+export function isTooOld(cli: string | null): boolean {
+  // `null` is "could not be run at all" — its own row on the page, and not a
+  // version claim we have any evidence for.
+  return cli !== null && !atLeast(cli, MINIMUM_CLI)
+}
+
+/**
  * Whether `version` is at least `floor`, comparing `x.y.z` numerically.
  *
  * **Unparsable input answers `false`.** Every caller uses this to decide

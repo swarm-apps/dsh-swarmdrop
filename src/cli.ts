@@ -634,13 +634,31 @@ export function watch(
       if (frame !== undefined) onFrame(frame)
     },
     onError: onEnded,
-    // The subscription's own failures are structural (binary gone, node
-    // unavailable) and the exit code says more than a stray tracing line would.
-    // No code is exempt: for a stream that is supposed to run forever, having
-    // exited *is* the news.
-    explain: (_stderr, code) => `\`${binary()} watch\` exited with ${String(code)}`,
+    explain: explainWatchExit,
   })
   return handle.stop
+}
+
+/**
+ * Turn a subscription's exit into one sentence.
+ *
+ * The failures are structural (binary gone, node unavailable) and the exit code
+ * says more than a stray tracing line would. **No code is exempt**: for a stream
+ * that is supposed to run forever, having exited *is* the news.
+ *
+ * One case gets a sentence of its own. `swarmdrop watch` arrived in 0.4.0, and
+ * an older binary answers with clap's usage error — text about argument
+ * parsing, for a subscription that typed no arguments. It is the likeliest
+ * failure now that `PATH` outranks the bundled copy: an install that has been
+ * sitting at an old version is the one that gets used, and "exited with 2" does
+ * not point anywhere near the fix.
+ */
+export function explainWatchExit(stderr: string, code: number | null): string {
+  if (code === 2 && /unrecognized subcommand|unexpected argument/i.test(stderr)) {
+    return 'this swarmdrop is too old to subscribe to (`swarmdrop watch` needs 0.4.0'
+      + ' or newer); the panel cannot show live state until it is upgraded'
+  }
+  return `\`${binary()} watch\` exited with ${String(code)}`
 }
 
 /** One line off `swarmdrop invite create --json --decide-from-stdin`. */

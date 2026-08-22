@@ -23,6 +23,12 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - About names the executable in use and where it came from, the running node's
   version, and warns when the two are out of step.
+- About says so when the `swarmdrop` in use is older than 0.5.0, which the
+  plugin needs to subscribe and to pair. Deferring to `PATH` makes a long-idle
+  install the one that gets used, and its failures do not look like a version
+  problem from the outside.
+- A subscription that fails because the binary predates `swarmdrop watch` says
+  that, instead of reporting exit code 2.
 
 ### Fixed
 

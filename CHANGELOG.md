@@ -8,6 +8,33 @@ nothing written down does not get published.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-22
+
+### Changed
+
+- **BREAKING**: the minimum `swarmdrop` is now 0.9.0, up from 0.5.0 — 0.9.0 is
+  where `invite qr` arrived, and the pairing dialog's QR code comes from it.
+  The floor is not uniform and About says so: below 0.5.0 the plugin is inert,
+  while a 0.8.x install keeps working and can still pair — the dialog states
+  that it cannot draw a code and leaves the link.
+- Pairing moved out of the sidebar popover into two dialogs. Issuing an invite
+  now shows a scannable **QR code** rather than several hundred characters of
+  link, with copy and open buttons beside it; the link text itself is gone.
+- An inbound pairing request now opens a dialog **regardless of whether the
+  panel is showing**. It used to render inside the popover, so closing the
+  panel meant nobody could answer and the far side timed out.
+- Closing the invite dialog no longer ends the pairing. Only "Cancel pairing"
+  does. The Pairing section keeps a row saying a desk is open, with a way back
+  into it — you close that dialog every time you go paste the link somewhere.
+
+### Added
+
+- The settings console can pair a device too, from Invites. It drives the same
+  desk as the panel: one machine, one desk, no way to open a second.
+- The bundled `swarmdrop` optional dependency moves to `^0.9.0`, matching the
+  floor above — the copy someone with nothing installed ends up running has to
+  be one that can draw a code too.
+
 ## [0.5.0] - 2026-08-22
 
 ### Changed
@@ -259,7 +286,7 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 First release: tools, the `/swarmdrop` command, conversation rows for transfers
 and received items, and the `@` inbox source.
 
-[Unreleased]: https://github.com/swarm-apps/dsh-swarmdrop/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/swarm-apps/dsh-swarmdrop/compare/v0.6.0...HEAD
 [0.3.0]: https://github.com/swarm-apps/dsh-swarmdrop/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/swarm-apps/dsh-swarmdrop/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/swarm-apps/dsh-swarmdrop/compare/v0.1.1...v0.2.0

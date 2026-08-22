@@ -37,21 +37,30 @@ for stopped, grey while the first answer is still in flight. Opening it gives yo
   otherwise read "unknown" and say nothing the node row did not.
 - **Devices** — what is paired and whether it is online. `unknown` is its own
   state, not a synonym for offline.
-- **Pairing** — "Add a device" issues an invite and staffs the desk; the link it
-  shows opens SwarmDrop's own page, which draws the QR code for your phone to
-  scan. When a device shows up you see its name, system, link type and **full
-  node id** before deciding.
+- **Pairing** — "Add a device" issues an invite and staffs the desk, then opens
+  a dialog showing it as a **QR code** for your phone to scan, with the link
+  behind a copy button for when scanning is not an option. When a device shows
+  up, a second dialog gives you its name, system, link type and **full node id**
+  before you decide — and it opens whether or not the panel is showing, because
+  a request nobody answers is a device that just times out.
 
 Pairing still requires a person to look at the far side's identity — that has not
 been relaxed, only moved. An invite is a one-shot capability that travels as a
 link, and whoever presents it first consumes it, so SwarmDrop's node refuses
 every inbound request unless someone is at the desk.
 
-**The desk stays staffed until you press Cancel**, not until you dismiss the
-panel — you will usually be looking at your phone at that moment, and a popover
-that closes when you click away would take the invite with it. The sidebar dot
-turns amber-grey while a window is open, so a desk left staffed is visible
-without opening anything.
+**The desk stays staffed until you press "Cancel pairing"**, not until you close
+the dialog — copying the link is *in order to* go paste it somewhere, so the
+dialog is always closed mid-pairing, and closing it must not end what the far
+side is halfway through. The Pairing section keeps a "pairing in progress" row
+with a way back in, and the sidebar dot turns amber-grey, so a desk left staffed
+is visible without opening anything.
+
+The QR code is rendered by `swarmdrop` itself, not by the browser. SwarmDrop
+encodes every one of its surfaces through one module, and that module also
+decides how many dialable addresses fit on the code and drops the rest — work
+that needs the invite's structure opened up. A second encoder in the browser
+would quietly produce codes a camera cannot read.
 
 ### The settings page
 
@@ -135,16 +144,19 @@ use instead. The only visible effect is that the first SwarmDrop call after
 installing takes a few seconds longer than the rest — and only if the bundled
 copy is the one being used at all.
 
-**`swarmdrop` 0.5.0 or newer is required.** 0.4.0 added `swarmdrop watch`, which
+**`swarmdrop` 0.9.0 or newer is required.** 0.4.0 added `swarmdrop watch`, which
 this plugin subscribes to; 0.5.0 added `invite create --decide-from-stdin`, which
-is what lets the panel run the pairing desk. On 0.4.0 everything else works and
-pairing reports that the CLI is too old.
+is what lets the panel run the pairing desk; 0.9.0 added `invite qr`, which is
+where the pairing dialog's code comes from. The floor is not uniform: below
+0.5.0 the plugin is inert, while between 0.5.0 and 0.9.0 everything works and
+pairing works — the dialog just says it cannot draw a code and leaves you the
+link.
 
 **Pair a device** from the panel — the plugin has nothing to talk to otherwise.
 The terminal route still works if you prefer it:
 
 ```bash
-swarmdrop invite create      # scan the QR from your phone's SwarmDrop app
+swarmdrop invite create      # prints the link; open it to get a scannable code
 ```
 
 Nothing here requires a SwarmDrop node to be running: the plugin loads cleanly on

@@ -27,7 +27,9 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   CLI will accept in that phase. Requires `swarmdrop` 0.7.0 for the rate; the
   row falls back to the session log when no channel is available or on replay.
 - `swarmdrop_search_inbox` requires `swarmdrop` 0.7.0; an older one is reported
-  as a version requirement rather than a usage error.
+  as a version requirement rather than a usage error. The bundled binary moves
+  to `^0.7.0` with it — `^0.6.0` does not match 0.7.0, so leaving it would have
+  shipped a tool that no bundled install could ever satisfy.
 
 ### Fixed
 

@@ -44,5 +44,15 @@ const EXIT_HINTS: Readonly<Record<number, string>> = {
   6: ' — the peer refused; retrying will be refused again',
 }
 
-/** The `swarmdrop` version a capability first appeared in. */
+/**
+ * The `swarmdrop` version a capability first appeared in.
+ *
+ * ⚠️ **Raising a floor means raising `optionalDependencies.swarmdrop` too.**
+ * That range is what `dsh plugin add` installs as the bundled binary, and
+ * `^0.6.0` does not match 0.7.0 — leave it behind and the copy this package
+ * ships can never satisfy the floor this file declares. Every user who does not
+ * already have their own SwarmDrop gets a tool that reports "needs a newer
+ * version" forever, which reads as the plugin being broken rather than as a
+ * dependency nobody bumped.
+ */
 export const INBOX_SEARCH_SINCE = '0.7.0'

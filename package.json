@@ -1,7 +1,7 @@
 {
   "name": "dsh-swarmdrop",
   "version": "0.4.0",
-  "description": "Send files from your DeepSeek Harness agent straight to your phone, and reference what your phone sent back — no account, no public IP, end-to-end encrypted.",
+  "description": "Send files from your DeepSeek Harness agent straight to your phone, and reference what your phone sent back \u2014 no account, no public IP, end-to-end encrypted.",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -73,7 +73,7 @@
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.8"
   },
   "optionalDependencies": {
-    "swarmdrop": "^0.6.0"
+    "swarmdrop": "^0.7.0"
   },
   "dependencies": {
     "zod": "^4.4.3"

@@ -27,15 +27,15 @@
  * origin, so it works there too.
  */
 
-// ⚠️ `ClientContext` rather than cordis's bare `Context`: the client-side
-// service surface (`slots`, `sessions`, `conversationEvents`) reaches `Context`
-// through this module's declaration merging. Importing the bare type compiles
-// against the *Node* augmentation instead, and the mismatch shows up as
-// "Property 'scope' does not exist on type 'SessionStore'" — a confusing error
-// for what is really a wrong import.
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context } from '@deepseek-ai/cordis'
 // Type-only: pulls the locale plugin's Context merge (`ctx.locale`).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+// Type-only: pulls the renderer's Context merge (`ctx.slots`) — 0.2.x moved
+// the slot registry service out of the old `dsh-client-runtime` into
+// `dsh-client-ui-renderer`.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: pulls the session controller's Context merge (`ctx.sessions`).
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type { InputTriggerService } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 
 import { SwarmDropConsole, type SwarmDropConsoleFace } from './console.js'
@@ -43,18 +43,22 @@ import { createLiveTransfers } from './live-transfers.js'
 import { createConsolePort } from './console-port.js'
 import { createInboxSource } from './inbox-source.js'
 import { en, NS, zh } from './locales.js'
-import {
-  ReceivedRow, TransferRow, receivedDefinition, transferDefinition,
-} from './nodes.js'
+import { ReceivedRow, TransferRow } from './nodes.js'
 import { SwarmDropPanel, type SwarmDropPanelFace } from './panel.js'
 import { createPanelPort } from './panel-port.js'
 
 export const name = 'swarmdrop-client'
-export const inject = ['conversationEvents', 'sessions', 'slots']
+export const inject = ['slots', 'sessions', 'locale', 'inputTriggers', 'connection']
 
-export function apply(ctx: ClientContext): void {
-  ctx.conversationEvents.register(transferDefinition)
-  ctx.conversationEvents.register(receivedDefinition)
+export function apply(ctx: Context): void {
+  // 0.1.x registered each chat node definition on `ctx.conversationEvents`
+  // before registering its renderer on the slot. 0.2.x folds the two into one
+  // step: `slots.register` under 'conversation.chat.node' with the node kind
+  // as the key IS the registration — the kind union it is checked against is
+  // `ChatNodeKind`, which this plugin extends through the `ChatNodeDataMap`
+  // declaration merging in `./nodes.tsx`. The definitions below are still
+  // exported (their fold logic is the payload the row renders), but nothing
+  // registers them separately any more.
 
   // The transfer row wants two things the session log cannot give it — how far
   // a running transfer has got, and a way to pause it — but the row itself is

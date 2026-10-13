@@ -23,9 +23,12 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Button, DisclosureRow, IconCheckOutline16, IconGlobeOutline14, IconPlusOutline16,
-  IconTrashOutline16, StateDot, type StateDotState,
+  Button, DisclosureRow, StateDot, type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+
+import {
+  IconCheckOutline16, IconGlobeOutline14, IconPlusOutline16, IconTrashOutline16,
+} from './icons.js'
 
 import {
   Copyable, Empty, Fact, Group,

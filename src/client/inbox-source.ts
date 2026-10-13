@@ -22,9 +22,8 @@
  * decorate"; it must never mean "let me fetch that for you".
  */
 
-// See the note in `./index.ts` on why this is `ClientContext`.
+import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   ClientSessionContext, InputTriggerCandidate, InputTriggerSource,
 } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
@@ -54,7 +53,7 @@ function isProjection(value: unknown): value is SwarmDropInboxProjection {
  * @param ctx - the client root context (sessions live on it).
  * @returns the source, ready for `inputTriggers.registerSource`.
  */
-export function createInboxSource(ctx: ClientContext): InputTriggerSource {
+export function createInboxSource(ctx: Context): InputTriggerSource {
   /** The projection face for one session, or undefined when it is not resolvable. */
   const faceOf = (sessionId: SessionId) => {
     const scope = ctx.sessions.scope(sessionId)

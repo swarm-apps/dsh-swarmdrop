@@ -35,9 +35,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
-import {
-  Button, IconCheckOutline16, IconCloseOutline16, IconWarningOutline16,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+
+import { IconCheckOutline16, IconCloseOutline16, IconWarningOutline16 } from './icons.js'
 import type { HostObservable, InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pulls the settings shell's SlotMap declaration (the
 // 'settings.section' entry) into this program so `PropsRuntime` below resolves

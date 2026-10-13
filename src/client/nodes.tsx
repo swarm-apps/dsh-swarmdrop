@@ -26,8 +26,8 @@
 import type { CSSProperties } from 'react'
 import type {
   ConversationLocation, ConversationNodeContext, ConversationNodeDefinition,
-} from '@deepseek-ai/dsh-client-runtime/client'
-import type { ChatNodeKind, ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ChatNodeKind, ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { formatDuration, formatSize } from './format.js'
 import type { LiveSnapshot, LiveTransfer, LiveTransfersFace } from './live-transfers.js'
@@ -100,7 +100,10 @@ export interface ReceivedChatData {
   readonly contentKind: string
 }
 
-declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+// 0.2.x moved the ChatNodeDataMap merge point from ui-conversation to the
+// dedicated chat package; augmenting the old module would register the kinds
+// against a table nothing reads.
+declare module '@deepseek-ai/dsh-client-ui-chat/client' {
   interface ChatNodeDataMap {
     'swarmdrop-transfer': TransferChatData
     'swarmdrop-received': ReceivedChatData

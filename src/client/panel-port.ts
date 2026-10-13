@@ -52,8 +52,9 @@
  */
 
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
-import type { ClientContext, ObservableSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context } from '@deepseek-ai/cordis'
+import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 
 import { deviceKey, transferKey, type BusyKey } from './busy.js'
 
@@ -346,7 +347,7 @@ function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function createPanelPort(ctx: ClientContext): PanelPort {
+export function createPanelPort(ctx: Context): PanelPort {
   const connection = ctx.get('connection') as ConnectionHandle
   const store = createSnapshotStore<PanelState>(INITIAL)
   const life = new AbortController()

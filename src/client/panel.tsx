@@ -27,11 +27,15 @@ import {
   type CSSProperties, type ReactNode,
 } from 'react'
 import {
-  Button, IconCheckOutline16, IconCopyOutline16, IconPlayOutline16,
-  IconPlusOutline16, IconRefreshOutline14,
-  IconStopFill16, IconTrashOutline16, StateDot, useDismissOnOutsidePointer,
+  Button, StateDot, useDismissOnOutsidePointer,
   writeClipboard, type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+
+import {
+  IconCheckOutline16, IconCopyOutline16, IconPlayOutline16,
+  IconPlusOutline16, IconRefreshOutline14,
+  IconStopFill16, IconTrashOutline16,
+} from './icons.js'
 import type { HostObservable, InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pulls the sidebar's SlotMap declaration (the 'sidebar.footer.action'
 // entry) into this program so PropsRuntime below resolves against the real one.

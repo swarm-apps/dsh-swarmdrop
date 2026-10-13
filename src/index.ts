@@ -124,7 +124,10 @@ export function apply(ctx: Context): void {
   // "What you had at hand when this conversation began" is context a reader
   // needs three months later, so it is recorded as a first-class event rather
   // than fetched on demand.
-  ctx.on('agent/session-start', ({ agent }) => { bridge.recordBaseline(agent) })
+  ctx.on('agent/created', ({ agent }) => {
+    bridge.recordBaseline(agent)
+    return undefined
+  })
 
   // The `@` menu's candidate list is a *projection* of those events, not a
   // browser-side fold: the framework drives the fold over committed events in

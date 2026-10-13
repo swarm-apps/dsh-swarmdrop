@@ -32,8 +32,14 @@ export default defineConfig({
   // half instead.
   clean: true,
   dts: true,
-  // `react` is in devDependencies as well as peerDependencies, and only the
-  // second one is external by default.
+  // Every `@deepseek-ai/dsh-*` package (and `react`) is provided by the host
+  // web shell's own module table — including their transitive deps like
+  // `zustand`/`immer`. Bundling any of them inlines that code, and its
+  // internal `require("zustand/vanilla")` then resolves against *our* bundle's
+  // module table, which only knows the injected packages + react → "missed the
+  // module table" at web boot. `neverBundle: true` does not catch the symlinked
+  // peer deps, so force them external with an explicit `external` regex.
+  external: [/^@deepseek-ai\//, 'react', 'react/jsx-runtime', /^react\//],
   deps: { neverBundle: ['react', 'react/jsx-runtime'] },
   outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
 

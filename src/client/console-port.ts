@@ -30,8 +30,9 @@
  */
 
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
-import type { ClientContext, ObservableSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context } from '@deepseek-ai/cordis'
+import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 
 import {
   ACTION_RELOADS, ENDPOINT_CONSOLE_ACT, ENDPOINT_CONSOLE_LOAD,
@@ -130,7 +131,7 @@ function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function createConsolePort(ctx: ClientContext): ConsolePort {
+export function createConsolePort(ctx: Context): ConsolePort {
   const connection = ctx.get('connection') as ConnectionHandle
   const store = createSnapshotStore<ConsoleState>(INITIAL)
   const life = new AbortController()

@@ -20,9 +20,12 @@
 
 import { useCallback, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
-  Button, IconCheckOutline16, IconCopyOutline16, IconPlayOutline16, IconStopFill16,
-  StateDot, writeClipboard, type StateDotState,
+  Button, StateDot, writeClipboard, type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+
+import {
+  IconCheckOutline16, IconCopyOutline16, IconPlayOutline16, IconStopFill16,
+} from './icons.js'
 
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 

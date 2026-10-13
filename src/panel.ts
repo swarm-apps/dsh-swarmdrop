@@ -30,7 +30,10 @@ import type { Context } from '@deepseek-ai/cordis'
 // this program. A value import would put a real edge on a package this plugin
 // only needs when a web UI happens to be present.
 import type {} from '@deepseek-ai/dsh-client-connection'
-import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api'
+// 0.2.x moved the RPC result type here from `@deepseek-ai/dsh-host-apiproxy/api`
+// (that package no longer exists); the root re-exports it as
+// `ConnectionRpcResult` — the same shape under its full name.
+import type { ConnectionRpcResult } from '@deepseek-ai/dsh-client-connection'
 
 import { call, inviteQr, isUnknownToCli, SwarmDropError } from './cli.js'
 import { count, flag, list, optional, rows, text } from './coerce.js'
@@ -112,10 +115,15 @@ export function registerPanel(ctx: Context, sources: PanelSources): void {
     // `rpc.handle` binds the registration to the Context that read the service,
     // so the channel is torn down with this fiber. The returned disposer is the
     // effect's own; calling it here as well would unregister twice.
+    //
+    // 0.2.x dropped the third `authority` option: every registered channel is
+    // authenticated by the transport itself, which is the fence this panel
+    // wanted anyway (see the `trusted-host` note in the module docblock — it
+    // argued the old option bought nothing a browser token does not already
+    // enforce).
     connectionCtx.connection.rpc.handle(
       PANEL_CHANNEL,
       (endpoint, payload, signal) => dispatch(sources, endpoint, payload, signal),
-      { authority: 'trusted-host' },
     )
   })
 }
@@ -133,7 +141,7 @@ async function dispatch(
   endpoint: string,
   payload: unknown,
   signal: AbortSignal,
-): Promise<RpcResult<unknown>> {
+): Promise<ConnectionRpcResult<unknown>> {
   const route = ROUTES[endpoint]
   if (route === undefined) {
     return {

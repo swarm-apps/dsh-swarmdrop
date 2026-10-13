@@ -35,9 +35,12 @@ import {
   type CSSProperties, type ReactNode,
 } from 'react'
 import {
-  Button, IconCheckOutline16, IconCloseOutline16, IconCopyOutline16,
-  IconRightUpOutline16, Modal, StateDot, writeClipboard,
+  Button, Modal, StateDot, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+
+import {
+  IconCheckOutline16, IconCloseOutline16, IconCopyOutline16, IconRightUpOutline16,
+} from './icons.js'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 
 import {
